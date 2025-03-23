@@ -241,7 +241,7 @@ else:  # AI가 생성한 문제
             with st.spinner("AI가 문제를 생성 중입니다..."):
                 try:
                     # OpenAI API를 사용하여 문제 생성
-                    client = openai.Client(api_key=st.session_state.api_key)
+                    client = openai.OpenAI(api_key=st.session_state.api_key)
                     response = client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[
@@ -363,7 +363,7 @@ if st.session_state.current_problem:
             with st.spinner("AI가 첨삭 중입니다..."):
                 try:
                     # Use the user-provided API key
-                    client = openai.Client(api_key=st.session_state.api_key)
+                    client = openai.OpenAI(api_key=st.session_state.api_key)
                     response = client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[
@@ -404,4 +404,4 @@ if st.session_state.current_problem:
 
 # Show instruction if API key is not set
 if not st.session_state.api_key:
-    st.warning("사용하려면 사이드바에 OpenAI API 키를 입력해주세요. API 키는 안전하게 보관되며 현재 세션에서만 사용됩니다.") 
+    st.warning("사용하려면 사이드바에 OpenAI API 키를 입력해주세요. API 키는 안전하게 보관되며 현재 세션에서만 사용됩니다.")
