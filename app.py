@@ -13,7 +13,7 @@ import zipfile
 from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
-import google.generativeai as genai  # Gemini API 임포트 추가
+import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
@@ -480,6 +480,7 @@ def generate_ai_problems(topic, level, num_problems, api_model):
         
         elif api_model == "Gemini" and st.session_state.gemini_api_key:
             # Gemini API를 사용하여 문제 생성
+            genai.configure(api_key=st.session_state.gemini_api_key)
             model = genai.GenerativeModel('gemini-pro')
             prompt = f"""
             Create {num_problems} English practice problems on the topic of {topic} at {level} level.
@@ -1257,6 +1258,9 @@ def admin_api_settings():
                     f.write(f"OPENAI_API_KEY={st.session_state.openai_api_key}\n")
                 f.write(f"GEMINI_API_KEY={gemini_api_key.strip()}\n")
             st.success("Gemini API 키가 저장되었습니다.")
+            # Gemini API 초기화
+            if gemini_api_key.strip():
+                genai.configure(api_key=gemini_api_key.strip())
         except Exception as e:
             st.error(f"API 키 저장 중 오류가 발생했습니다: {e}")
     
@@ -1295,7 +1299,16 @@ def admin_api_settings():
             if not st.session_state.gemini_api_key:
                 st.error("Gemini API 키가 설정되지 않았습니다.")
             else:
-                st.info("Gemini API 테스트는 이 데모에서 구현되지 않았습니다.")
+                try:
+                    with st.spinner("Gemini API 연결 테스트 중..."):
+                        model = genai.GenerativeModel('gemini-pro')
+                        response = model.generate_content("Hello, can you hear me? Please respond with 'Yes, I can hear you clearly.'")
+                        if "I can hear you" in response.text:
+                            st.success("Gemini API 연결 테스트 성공!")
+                        else:
+                            st.warning(f"API가 응답했지만 예상과 다릅니다: {response.text}")
+                except Exception as e:
+                    st.error(f"Gemini API 연결 테스트 실패: {e}")
 
 def admin_user_management():
     st.header("사용자 관리")
