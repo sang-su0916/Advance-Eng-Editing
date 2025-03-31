@@ -13,14 +13,25 @@ import zipfile
 from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
-import google.generativeai as genai
 
-# Load environment variables
+# Load environment variables first
 load_dotenv()
 
-# Initialize Gemini
-if 'gemini_api_key' in st.session_state and st.session_state.gemini_api_key:
-    genai.configure(api_key=st.session_state.gemini_api_key)
+# Initialize API configurations
+try:
+    import google.generativeai as genai
+    if os.getenv("GOOGLE_API_KEY"):
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+except ImportError:
+    st.error("google-generativeai 패키지가 설치되지 않았습니다. 'pip install google-generativeai'를 실행해주세요.")
+except Exception as e:
+    st.error(f"Gemini API 초기화 중 오류가 발생했습니다: {str(e)}")
+
+# Initialize session state
+if 'openai_api_key' not in st.session_state:
+    st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+if 'gemini_api_key' not in st.session_state:
+    st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
 # Page configuration
 st.set_page_config(
@@ -37,10 +48,6 @@ def initialize_session_states():
         st.session_state.user_answer = ""
     if 'feedback' not in st.session_state:
         st.session_state.feedback = None
-    if 'openai_api_key' not in st.session_state:
-        st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-    if 'gemini_api_key' not in st.session_state:
-        st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
     if 'input_method' not in st.session_state:
         st.session_state.input_method = "text"
     if 'custom_problems' not in st.session_state:

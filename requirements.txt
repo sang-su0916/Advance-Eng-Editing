@@ -1,3 +1,7 @@
 streamlit
 openai
 python-dotenv
+google-generativeai
+pandas
+numpy
+altair
