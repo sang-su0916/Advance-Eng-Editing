@@ -42,6 +42,7 @@ st.set_page_config(
 
 # Function to initialize session states
 def initialize_session_states():
+    """세션 상태 초기화"""
     if 'current_problem' not in st.session_state:
         st.session_state.current_problem = None
     if 'user_answer' not in st.session_state:
@@ -70,6 +71,13 @@ def initialize_session_states():
         st.session_state.teacher_problems = {}
     if 'student_records' not in st.session_state:
         st.session_state.student_records = {}
+    
+    # API 키 초기화 - .env 파일에서 로드
+    load_dotenv()
+    if 'openai_api_key' not in st.session_state:
+        st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+    if 'gemini_api_key' not in st.session_state:
+        st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
 # Initialize session state
 initialize_session_states()
@@ -78,40 +86,29 @@ initialize_session_states()
 def save_users_data():
     """사용자 데이터를 JSON 파일로 저장"""
     try:
-        users_data = {
-            "users": st.session_state.users,
-            "teacher_problems": st.session_state.teacher_problems,
-            "student_records": st.session_state.student_records
+        data = {
+            'teacher_problems': st.session_state.teacher_problems,
+            'student_records': st.session_state.student_records,
+            'users': st.session_state.users if 'users' in st.session_state else {}
         }
-        with open("users_data.json", "w", encoding="utf-8") as f:
-            json.dump(users_data, f, ensure_ascii=False, indent=4)
+        with open('users_data.json', 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
     except Exception as e:
-        st.error(f"사용자 데이터 저장 중 오류 발생: {e}")
+        st.error(f"데이터 저장 중 오류 발생: {str(e)}")
+        return False
 
 def load_users_data():
     """JSON 파일에서 사용자 데이터 로드"""
     try:
-        if os.path.exists("users_data.json"):
-            with open("users_data.json", "r", encoding="utf-8") as f:
+        if os.path.exists('users_data.json'):
+            with open('users_data.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                st.session_state.users = data.get("users", {})
-                st.session_state.teacher_problems = data.get("teacher_problems", {})
-                st.session_state.student_records = data.get("student_records", {})
-        
-        # 기본 관리자 계정이 없으면 추가
-        if not st.session_state.users:
-            # 기본 관리자 계정 추가 (admin/admin123)
-            admin_password = "admin123"
-            hashed_password = hashlib.sha256(admin_password.encode()).hexdigest()
-            st.session_state.users["admin"] = {
-                "password": hashed_password,
-                "role": "admin",
-                "name": "관리자",
-                "email": "admin@example.com"
-            }
-            save_users_data()
+                st.session_state.teacher_problems = data.get('teacher_problems', {})
+                st.session_state.student_records = data.get('student_records', {})
+                st.session_state.users = data.get('users', {})
     except Exception as e:
-        st.error(f"사용자 데이터 로드 중 오류 발생: {e}")
+        st.error(f"데이터 로드 중 오류 발생: {str(e)}")
 
 # Load user data at app start
 load_users_data()
@@ -129,6 +126,12 @@ def login_user(username, password):
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.session_state.user_role = st.session_state.users[username]["role"]
+                
+                # API 키 다시 로드
+                load_dotenv()
+                st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+                st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+                
                 return True
             else:
                 st.error("비밀번호가 일치하지 않습니다.")
@@ -141,9 +144,18 @@ def login_user(username, password):
 
 def logout_user():
     """사용자 로그아웃 처리"""
+    # API 키는 유지하지 않음
+    st.session_state.clear()
+    
+    # 기본 상태 설정
     st.session_state.logged_in = False
     st.session_state.username = None
     st.session_state.user_role = None
+    
+    # API 키 재로드
+    load_dotenv()
+    st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+    st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
 def register_user(username, password, role, name, email, created_by=None):
     """새 사용자 등록"""
@@ -439,323 +451,562 @@ def teacher_dashboard():
         st.rerun()
 
 def check_api_key():
-    """API 키 유효성을 확인하는 함수"""
-    has_openai = bool(st.session_state.openai_api_key.strip())
-    has_gemini = bool(st.session_state.gemini_api_key.strip())
-    return has_openai or has_gemini
+    """API 키가 설정되어 있는지 확인하는 함수"""
+    # 사용자가 선택한 AI 모델에 따라 키 체크
+    selected_model = st.session_state.get('selected_model', "OpenAI GPT")  # 기본값 OpenAI
+    
+    if selected_model == "OpenAI GPT":
+        return bool(st.session_state.get('openai_api_key', '').strip())
+    elif selected_model == "Google Gemini":
+        return bool(st.session_state.get('gemini_api_key', '').strip())
+    else:
+        # 둘 중 하나라도 설정되어 있으면 True
+        return bool(st.session_state.get('openai_api_key', '').strip() or 
+                   st.session_state.get('gemini_api_key', '').strip())
 
-def generate_ai_problems(topic, level, num_problems, api_model):
-    """AI를 사용하여 문제를 생성하는 함수"""
+def save_generated_problems(problems, school_type, grade, topic, difficulty):
+    """생성된 문제를 저장하는 함수"""
     try:
-        if api_model == "OpenAI GPT" and st.session_state.openai_api_key:
-            # OpenAI API를 사용하여 문제 생성
-            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are an expert English teacher creating practice problems."},
-                    {"role": "user", "content": f"""
-                    Create {num_problems} English practice problems on the topic of {topic} at {level} level.
-                    The ratio should be: 80% multiple choice, 20% open-ended questions.
-                    Return in JSON format with fields: name, type, question, context, options (for MC), correct_answer, example (for open-ended).
-                    """}
-                ],
-                temperature=0.7
-            )
-            return json.loads(response.choices[0].message.content)
+        if 'teacher_problems' not in st.session_state:
+            st.session_state.teacher_problems = {}
         
-        elif api_model == "Gemini" and st.session_state.gemini_api_key:
-            # Gemini API를 사용하여 문제 생성
-            genai.configure(api_key=st.session_state.gemini_api_key)
-            model = genai.GenerativeModel('gemini-pro')
-            prompt = f"""
-            Create {num_problems} English practice problems on the topic of {topic} at {level} level.
-            The ratio should be: 80% multiple choice, 20% open-ended questions.
-            Return in JSON format with fields: name, type, question, context, options (for MC), correct_answer, example (for open-ended).
-            """
-            response = model.generate_content(prompt)
-            return json.loads(response.text)
+        # 문제 데이터 구조화
+        problem_data = {
+            "school_type": school_type,
+            "grade": grade,
+            "topic": topic,
+            "difficulty": difficulty,
+            "content": problems,
+            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "created_by": st.session_state.username,
+            "status": "approved"
+        }
         
+        # 고유한 키 생성
+        problem_key = f"{school_type}_{grade}_{topic}_{difficulty}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        # 문제 저장
+        st.session_state.teacher_problems[problem_key] = problem_data
+        
+        # 데이터 저장
+        if save_users_data():
+            return True, "문제가 성공적으로 저장되었습니다."
         else:
-            raise ValueError("선택한 AI 모델의 API 키가 설정되지 않았습니다.")
+            return False, "문제 저장 중 오류가 발생했습니다."
+    except Exception as e:
+        return False, f"문제 저장 중 오류 발생: {str(e)}"
+
+def generate_ai_problems():
+    """AI를 사용하여 문제 생성"""
+    try:
+        st.subheader("AI로 문제 생성하기")
+        
+        # API 키 설정 섹션
+        st.info("API 키가 설정되지 않은 경우 여기서 직접 입력할 수 있습니다.")
+        
+        # API 키 입력 옵션
+        api_key_option = st.radio(
+            "API 키 설정 방식:",
+            ["환경 변수 사용", "직접 입력"],
+            help="API 키를 환경 변수에서 가져올지, 직접 입력할지 선택하세요."
+        )
+        
+        if api_key_option == "직접 입력":
+            col1, col2 = st.columns(2)
+            with col1:
+                temp_openai_key = st.text_input(
+                    "OpenAI API 키 입력:",
+                    type="password",
+                    value=st.session_state.openai_api_key
+                )
+            with col2:
+                temp_gemini_key = st.text_input(
+                    "Gemini API 키 입력:",
+                    type="password",
+                    value=st.session_state.gemini_api_key
+                )
+            
+            # 임시 API 키 저장
+            if st.button("API 키 적용"):
+                st.session_state.openai_api_key = temp_openai_key
+                st.session_state.gemini_api_key = temp_gemini_key
+                if temp_gemini_key:
+                    genai.configure(api_key=temp_gemini_key)
+                st.success("API 키가 적용되었습니다.")
+                
+                # 키를 환경 변수로 저장할지 여부 선택
+                save_api_to_env = st.checkbox("API 키를 환경 변수(.env)에 영구 저장", value=False)
+                if save_api_to_env:
+                    try:
+                        # 기존 환경 변수 읽기
+                        env_content = {}
+                        try:
+                            with open(".env", "r") as f:
+                                for line in f:
+                                    if '=' in line:
+                                        key, value = line.strip().split('=', 1)
+                                        env_content[key] = value
+                        except:
+                            pass
+                        
+                        # 새 API 키 추가/업데이트
+                        if temp_openai_key:
+                            env_content["OPENAI_API_KEY"] = temp_openai_key
+                        if temp_gemini_key:
+                            env_content["GEMINI_API_KEY"] = temp_gemini_key
+                        
+                        # 파일에 저장
+                        with open(".env", "w") as f:
+                            for key, value in env_content.items():
+                                f.write(f"{key}={value}\n")
+                        
+                        st.success("API 키가 환경 변수에 저장되었습니다.")
+                    except Exception as e:
+                        st.error(f"API 키 저장 중 오류 발생: {e}")
+        
+        st.markdown("---")
+        
+        # 학교급 선택
+        school_type = st.selectbox(
+            "학교급:", 
+            ["중학교", "고등학교"],
+            help="학교 급별을 선택하세요."
+        )
+        
+        # 학년 선택
+        grade = st.selectbox(
+            "학년:", 
+            ["1학년", "2학년", "3학년"],
+            help="학년을 선택하세요."
+        )
+        
+        # 주제 선택
+        topic = st.selectbox(
+            "주제:", 
+            [
+                "일상생활/자기소개",
+                "학교생활/교육",
+                "취미/여가활동",
+                "환경/사회문제",
+                "과학/기술",
+                "문화/예술",
+                "진로/직업"
+            ],
+            help="문제의 주제를 선택하세요."
+        )
+        
+        # 난이도 선택
+        difficulty = st.selectbox(
+            "난이도:", 
+            ["하", "중", "상"],
+            help="문제의 난이도를 선택하세요."
+        )
+        
+        # 생성할 문제 수
+        num_problems = st.slider(
+            "생성할 문제 수:", 
+            min_value=1, 
+            max_value=10, 
+            value=5,
+            help="한 번에 생성할 문제의 수를 선택하세요."
+        )
+        
+        # AI 모델 선택
+        model_choice = st.radio(
+            "사용할 AI 모델:", 
+            ["OpenAI GPT", "Google Gemini"],
+            help="문제 생성에 사용할 AI 모델을 선택하세요."
+        )
+        
+        # 선택한 모델 저장 (API 키 확인 용도)
+        st.session_state.selected_model = model_choice
+
+        if st.button("AI 문제 생성하기"):
+            if not check_api_key():
+                st.error("API 키가 설정되지 않았습니다. 위에서 API 키를 입력하거나 관리자 설정에서 API 키를 확인해주세요.")
+                return
+
+            with st.spinner("문제를 생성하는 중입니다..."):
+                try:
+                    # 학교급별 난이도 조정을 위한 기준 설정
+                    level_criteria = {
+                        "중학교": {
+                            "하": "기초 영어 문법과 어휘, 간단한 일상 표현",
+                            "중": "기본 영어 문법과 어휘, 일반적인 상황에서의 의사소통",
+                            "상": "심화 영어 문법과 어휘, 다양한 상황에서의 의사소통"
+                        },
+                        "고등학교": {
+                            "하": "고교 기초 수준의 영어 문법과 어휘, 일반적인 주제의 의사소통",
+                            "중": "고교 중급 수준의 영어 문법과 어휘, 다양한 주제의 의사소통",
+                            "상": "고교 심화 수준의 영어 문법과 어휘, 학술적/전문적 주제의 의사소통"
+                        }
+                    }
+
+                    # 프롬프트 생성
+                    base_prompt = f"""
+영어 문제를 생성해주세요:
+
+[기본 정보]
+- 학교급: {school_type}
+- 학년: {grade}
+- 주제: {topic}
+- 난이도: {difficulty}
+- 문제 수: {num_problems}개
+
+[난이도 기준]
+{level_criteria[school_type][difficulty]}
+
+[문제 형식]
+각 문제는 다음 형식을 정확히 따라주세요:
+
+[문제 1]
+유형: [객관식/주관식/서술형]
+문제: (영어로 된 문제 내용)
+맥락: (문제의 상황 설명)
+보기: (객관식인 경우)
+A. 
+B. 
+C. 
+D. 
+정답: 
+해설: (영어 학습 포인트 설명)
+
+[문제 2]
+...
+
+[주의사항]
+1. {school_type} {grade} 수준에 맞는 어휘와 문법 사용
+2. {difficulty}난이도에 맞는 복잡성과 사고력 요구
+3. 실용적이고 실생활에서 활용 가능한 내용
+4. 명확한 정답과 상세한 해설 제공
+5. 각 문제는 독립적이며 서로 다른 학습 포인트 포함
+"""
+
+                    problems = None
+                    
+                    # OpenAI GPT 사용
+                    if model_choice == "OpenAI GPT" and st.session_state.get('openai_api_key'):
+                        client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+                        response = client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": base_prompt}],
+                            temperature=0.7,
+                            max_tokens=3000
+                        )
+                        problems = response.choices[0].message.content
+                    
+                    # Google Gemini 사용
+                    elif model_choice == "Google Gemini" and st.session_state.get('gemini_api_key'):
+                        genai.configure(api_key=st.session_state.gemini_api_key)
+                        model = genai.GenerativeModel('gemini-pro')
+                        response = model.generate_content(base_prompt)
+                        if response and hasattr(response, 'text'):
+                            problems = response.text
+                        else:
+                            st.error("Gemini API가 유효한 응답을 반환하지 않았습니다.")
+                            return
+                    
+                    if problems and len(problems.strip()) > 0:
+                        # 생성된 문제 표시
+                        st.success("문제가 생성되었습니다. 검토 후 저장해주세요.")
+                        
+                        # 교사 검토를 위한 편집 가능한 텍스트 영역
+                        edited_problems = st.text_area(
+                            "생성된 문제 검토 및 수정",
+                            value=problems,
+                            height=400,
+                            key="problem_edit_area"
+                        )
+                        
+                        # 저장 버튼
+                        if st.button("검토 완료 및 저장", key="save_problems"):
+                            if not edited_problems.strip():
+                                st.error("저장할 문제 내용이 없습니다.")
+                                return
+                            
+                            success, message = save_generated_problems(
+                                edited_problems,
+                                school_type,
+                                grade,
+                                topic,
+                                difficulty
+                            )
+                            
+                            if success:
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.error(message)
+                    else:
+                        st.error("문제 생성에 실패했습니다. 다시 시도해주세요.")
+                
+                except Exception as e:
+                    st.error(f"문제 생성 중 오류가 발생했습니다: {str(e)}")
+                    return
     
     except Exception as e:
-        if "google.generativeai" in str(e):
-            st.error("Gemini API 모듈을 설치해주세요: pip install google-generativeai")
-        else:
-            st.error(f"문제 생성 중 오류가 발생했습니다: {str(e)}")
-        return None
+        st.error(f"오류가 발생했습니다: {str(e)}")
+        return
 
 def teacher_problem_management():
     st.header("문제 관리")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["문제 목록", "직접 문제 출제", "CSV로 문제 업로드", "AI 문제 생성"])
+    tabs = st.tabs(["문제 목록", "직접 문제 제작", "CSV로 문제 업로드", "AI 문제 생성"])
     
     # 문제 목록 탭
-    with tab1:
-        st.subheader("출제한 문제 목록")
-        
-        teacher_problems = st.session_state.teacher_problems
-        if not teacher_problems:
-            st.info("아직 출제한 문제가 없습니다. 다른 탭에서 문제를 출제해보세요.")
-        else:
-            # 카테고리별로 정렬
-            categories = {}
-            for key, problem in teacher_problems.items():
-                # 현재 교사가 출제한 문제만 표시
-                if problem.get("created_by") == st.session_state.username:
-                    category = problem.get("category", "기타")
-                    if category not in categories:
-                        categories[category] = []
-                    categories[category].append(key)
-            
-            if not categories:
-                st.info("아직 출제한 문제가 없습니다. 다른 탭에서 문제를 출제해보세요.")
-            else:
-                # 카테고리 선택
-                selected_category = st.selectbox(
-                    "카테고리:",
-                    list(categories.keys()),
-                    key="view_category"
-                )
-                
-                # 선택된 카테고리의 문제 목록
-                if selected_category:
-                    for key in categories[selected_category]:
-                        problem = teacher_problems[key]
-                        with st.expander(f"{key.split('/')[-1] if '/' in key else key}"):
-                            st.write(f"**문제:** {problem['question']}")
-                            st.write(f"**맥락:** {problem['context']}")
-                            if 'example' in problem and problem['example']:
-                                st.write(f"**예시 답안:** {problem['example']}")
-                            
-                            if st.button(f"삭제: {key}", key=f"delete_{key}"):
-                                if key in st.session_state.teacher_problems:
-                                    del st.session_state.teacher_problems[key]
-                                    save_users_data()
-                                    st.success(f"문제 '{key}'가 삭제되었습니다.")
-                                    st.rerun()
+    with tabs[0]:
+        view_teacher_problems()
     
-    # 직접 문제 출제 탭
-    with tab2:
-        st.subheader("새 문제 출제하기")
+    # 직접 문제 제작 탭
+    with tabs[1]:
+        st.subheader("직접 문제 제작")
         
-        # 문제 유형 선택
-        problem_type = st.radio("문제 유형:", ["객관식", "주관식"], horizontal=True)
+        # 여기에 문제 제작 폼 추가
+        st.info("이 페이지에서 직접 영어 문제를 생성할 수 있습니다.")
         
-        # 카테고리 선택
-        custom_category = st.selectbox(
-            "문제 카테고리:", 
-            ["일상생활/자기소개", "학교생활/교육", "취미/여가활동", "여행/문화체험", 
-             "환경/사회문제", "과학/기술", "직업/진로", "건강/운동", 
-             "음식/요리", "예술/엔터테인먼트", "경제/비즈니스", "시사/뉴스",
-             "가족/인간관계", "감정/심리", "자연/동물", "기타"],
-            key="new_category"
+        # 학교급 선택
+        school_type = st.selectbox(
+            "학교급:", 
+            ["중학교", "고등학교"],
+            help="학교 급별을 선택하세요.",
+            key="manual_school_type"
         )
         
-        # 문제 이름
-        custom_name = st.text_input("문제 이름:", key="new_name")
+        # 학년 선택
+        grade = st.selectbox(
+            "학년:", 
+            ["1학년", "2학년", "3학년"],
+            help="학년을 선택하세요.",
+            key="manual_grade"
+        )
         
-        # 문제 내용
-        custom_question = st.text_area("문제를 입력하세요:", height=100, key="new_question")
-        custom_context = st.text_area("문제의 맥락을 입력하세요:", height=100, key="new_context")
-        
-        # 객관식인 경우 보기 입력
-        if problem_type == "객관식":
-            st.subheader("보기 입력")
-            options = []
-            for i in range(4):
-                option = st.text_input(f"보기 {i+1}:", key=f"option_{i}")
-                if option:
-                    options.append(option)
-            correct_answer = st.selectbox("정답 선택:", [f"보기 {i+1}" for i in range(len(options))] if options else [])
-        
-        # 주관식인 경우 예시 답안
-        else:
-            custom_example = st.text_area("예시 답안을 입력하세요:", height=100, key="new_example")
+        # 주제 선택
+        topic = st.selectbox(
+            "주제:", 
+            [
+                "일상생활/자기소개",
+                "학교생활/교육",
+                "취미/여가활동",
+                "환경/사회문제",
+                "과학/기술",
+                "문화/예술",
+                "진로/직업"
+            ],
+            help="문제의 주제를 선택하세요.",
+            key="manual_topic"
+        )
         
         # 난이도 선택
-        level_options = ["초급(초)", "초급(중)", "초급(상)", "중급(초)", "중급(중)", "중급(상)", "상급(초)", "상급(중)", "상급(상)"]
-        custom_level = st.selectbox("난이도:", level_options, key="new_level")
-        
-        if st.button("문제 저장하기"):
-            if not custom_name or not custom_question or not custom_context:
-                st.error("문제 이름, 문제 내용, 맥락은 필수 입력사항입니다.")
-            elif problem_type == "객관식" and (len(options) < 4 or not correct_answer):
-                st.error("객관식 문제는 4개의 보기와 정답을 모두 입력해야 합니다.")
-            else:
-                problem_key = f"{custom_category}/{custom_name}"
-                
-                # 중복 확인
-                if problem_key in st.session_state.teacher_problems:
-                    st.error(f"동일한 카테고리와 이름의 문제가 이미 존재합니다: {problem_key}")
-                else:
-                    # 문제 저장
-                    problem_data = {
-                        "category": custom_category,
-                        "question": custom_question,
-                        "context": custom_context,
-                        "type": problem_type,
-                        "level": custom_level,
-                        "created_by": st.session_state.username,
-                        "created_at": datetime.datetime.now().isoformat()
-                    }
-                    
-                    if problem_type == "객관식":
-                        problem_data["options"] = options
-                        problem_data["correct_answer"] = correct_answer
-                    else:
-                        problem_data["example"] = custom_example
-                    
-                    st.session_state.teacher_problems[problem_key] = problem_data
-                    save_users_data()
-                    st.success(f"문제 '{custom_name}'이(가) 저장되었습니다.")
-    
-    # CSV로 문제 업로드 탭
-    with tab3:
-        st.subheader("CSV로 문제 업로드")
-        
-        st.info("""
-        CSV 파일 형식:
-        - 첫 번째 행: 헤더 (name,category,question,context,example,level)
-        - 각 행: 하나의 문제
-        - 필수 열: name, category, question, context
-        - 선택 열: example, level
-        """)
-        
-        # 예시 CSV 다운로드
-        example_csv = """name,category,question,context,example,level
-영어소개,개인/일상생활,Introduce yourself in English.,This is a self-introduction for a job interview.,"Hello, my name is...",초급(중)
-취미설명,개인/일상생활,Describe your hobbies.,You are talking about your free time activities.,"I enjoy playing soccer...",초급(상)"""
-        
-        st.download_button(
-            label="예시 CSV 다운로드",
-            data=example_csv,
-            file_name="example_problems.csv",
-            mime="text/csv"
+        difficulty = st.selectbox(
+            "난이도:", 
+            ["하", "중", "상"],
+            help="문제의 난이도를 선택하세요.",
+            key="manual_difficulty"
         )
         
-        # CSV 파일 업로드
+        # 문제 내용 입력
+        problem_content = st.text_area(
+            "문제 내용 (형식에 맞춰 입력해주세요):",
+            height=400,
+            help="""
+            문제 형식 예시:
+            
+            [문제 1]
+            유형: 객관식
+            문제: What is the capital of the United Kingdom?
+            맥락: Identifying capital cities of European countries.
+            보기:
+            A. Paris
+            B. London
+            C. Berlin
+            D. Madrid
+            정답: B
+            해설: London is the capital city of the United Kingdom.
+            
+            [문제 2]
+            ...
+            """,
+            key="manual_content"
+        )
+        
+        if st.button("문제 저장", key="save_manual_problem"):
+            if not problem_content.strip():
+                st.error("문제 내용을 입력해주세요.")
+            else:
+                success, message = save_generated_problems(
+                    problem_content,
+                    school_type,
+                    grade,
+                    topic,
+                    difficulty
+                )
+                
+                if success:
+                    st.success(message)
+                    # 폼 초기화
+                    st.session_state.manual_content = ""
+                    st.rerun()
+                else:
+                    st.error(message)
+    
+    # CSV로 문제 업로드 탭
+    with tabs[2]:
+        st.subheader("CSV로 문제 업로드")
+        st.info("CSV 파일로 문제를 일괄 업로드할 수 있습니다. 아래 양식에 맞춰 CSV 파일을 준비해주세요.")
+        
+        # CSV 템플릿 다운로드 링크
+        st.markdown("""
+        ### CSV 양식 안내
+        아래 형식에 맞춰 CSV 파일을 준비해주세요:
+        
+        ```
+        school_type,grade,topic,difficulty,question_type,question,context,options,answer,explanation
+        중학교,1학년,일상생활/자기소개,하,객관식,"What is your name?","Basic personal introduction","A. My name is John. B. I am from Korea. C. I am 15 years old. D. I live in Seoul.",A,"This is how to introduce your name in English."
+        ```
+        
+        - school_type: 학교급 (중학교, 고등학교)
+        - grade: 학년 (1학년, 2학년, 3학년)
+        - topic: 주제 (일상생활/자기소개, 학교생활/교육, 등)
+        - difficulty: 난이도 (하, 중, 상)
+        - question_type: 문제 유형 (객관식, 주관식, 서술형)
+        - question: 문제 내용
+        - context: 문제 상황 설명
+        - options: 객관식 보기 (A. ... B. ... 형식)
+        - answer: 정답
+        - explanation: 해설
+        """)
+        
         uploaded_file = st.file_uploader("CSV 파일 업로드", type=["csv"])
         
         if uploaded_file is not None:
             try:
                 df = pd.read_csv(uploaded_file)
                 
-                # 필수 열 확인
-                required_columns = ["name", "category", "question", "context"]
+                # 필수 컬럼 확인
+                required_columns = ["school_type", "grade", "topic", "difficulty", "question_type", "question", "answer"]
                 missing_columns = [col for col in required_columns if col not in df.columns]
                 
                 if missing_columns:
-                    st.error(f"CSV 파일에 필수 열이 누락되었습니다: {', '.join(missing_columns)}")
+                    st.error(f"CSV 파일에 필수 컬럼이 누락되었습니다: {', '.join(missing_columns)}")
                 else:
-                    # 업로드된 문제 미리보기
-                    st.subheader("업로드된 문제 미리보기")
-                    st.dataframe(df)
+                    st.dataframe(df.head())
                     
-                    if st.button("문제 저장하기", key="csv_save"):
-                        imported_count = 0
-                        skipped_count = 0
+                    if st.button("문제 저장", key="save_csv_problems"):
+                        success_count = 0
+                        error_count = 0
                         
-                        for _, row in df.iterrows():
-                            try:
-                                name = str(row["name"]).strip()
-                                category = str(row["category"]).strip()
-                                question = str(row["question"]).strip()
-                                context = str(row["context"]).strip()
-                                example = str(row["example"]).strip() if "example" in row and not pd.isna(row["example"]) else ""
-                                level = str(row["level"]).strip() if "level" in row and not pd.isna(row["level"]) else "초급(중)"
+                        with st.spinner("문제를 저장하는 중입니다..."):
+                            for _, row in df.iterrows():
+                                # 문제 포맷 구성
+                                problem_text = f"""[문제]
+유형: {row['question_type']}
+문제: {row['question']}
+맥락: {row.get('context', '')}
+"""
                                 
-                                # 필수 필드 확인
-                                if not name or not category or not question or not context:
-                                    skipped_count += 1
-                                    continue
+                                # 객관식일 경우 보기 추가
+                                if row['question_type'] == '객관식' and 'options' in row and row['options']:
+                                    problem_text += f"보기:\n{row['options']}\n"
                                 
-                                problem_key = f"{category}/{name}"
+                                problem_text += f"정답: {row['answer']}\n"
                                 
-                                # 중복 확인
-                                if problem_key in st.session_state.teacher_problems:
-                                    skipped_count += 1
-                                    continue
+                                # 해설이 있으면 추가
+                                if 'explanation' in row and row['explanation']:
+                                    problem_text += f"해설: {row['explanation']}\n"
                                 
                                 # 문제 저장
-                                st.session_state.teacher_problems[problem_key] = {
-                                    "category": category,
-                                    "question": question,
-                                    "context": context,
-                                    "example": example,
-                                    "level": level,
-                                    "created_by": st.session_state.username,
-                                    "created_at": datetime.datetime.now().isoformat()
-                                }
+                                success, _ = save_generated_problems(
+                                    problem_text,
+                                    row['school_type'],
+                                    row['grade'],
+                                    row['topic'],
+                                    row['difficulty']
+                                )
                                 
-                                imported_count += 1
-                            
-                            except Exception as e:
-                                skipped_count += 1
+                                if success:
+                                    success_count += 1
+                                else:
+                                    error_count += 1
                         
-                        save_users_data()
-                        st.success(f"{imported_count}개의 문제가 성공적으로 저장되었습니다. {skipped_count}개의 문제가 건너뛰어졌습니다.")
+                        if error_count == 0:
+                            st.success(f"{success_count}개 문제가 성공적으로 저장되었습니다.")
+                            st.rerun()
+                        else:
+                            st.warning(f"{success_count}개 문제 저장 성공, {error_count}개 문제 저장 실패")
             
             except Exception as e:
-                st.error(f"CSV 파일 처리 중 오류가 발생했습니다: {e}")
+                st.error(f"CSV 파일 처리 중 오류가 발생했습니다: {str(e)}")
     
     # AI 문제 생성 탭
-    with tab4:
-        st.subheader("AI로 문제 생성하기")
+    with tabs[3]:
+        # API 키 설정 섹션
+        st.info("API 키가 설정되지 않은 경우 여기서 직접 입력할 수 있습니다.")
         
-        if not check_api_key():
-            st.error("OpenAI 또는 Gemini API 키가 설정되지 않았습니다. 관리자 페이지에서 설정해주세요.")
-        else:
-            # AI 문제 생성 인터페이스
-            ai_topic = st.selectbox("주제 선택:", [
-                "일상생활/자기소개", "학교생활/교육", "취미/여가활동", "여행/문화체험",
-                "환경/사회문제", "과학/기술", "직업/진로", "건강/운동",
-                "음식/요리", "예술/엔터테인먼트", "경제/비즈니스", "시사/뉴스"
-            ])
+        # API 키 입력 옵션
+        api_key_option = st.radio(
+            "API 키 설정 방식:",
+            ["환경 변수 사용", "직접 입력"],
+            help="API 키를 환경 변수에서 가져올지, 직접 입력할지 선택하세요.",
+            key="api_key_option_manage"
+        )
+        
+        if api_key_option == "직접 입력":
+            col1, col2 = st.columns(2)
+            with col1:
+                temp_openai_key = st.text_input(
+                    "OpenAI API 키 입력:",
+                    type="password",
+                    value=st.session_state.openai_api_key,
+                    key="openai_key_manage"
+                )
+            with col2:
+                temp_gemini_key = st.text_input(
+                    "Gemini API 키 입력:",
+                    type="password",
+                    value=st.session_state.gemini_api_key,
+                    key="gemini_key_manage"
+                )
             
-            ai_level = st.selectbox("난이도:", [
-                "초급(초)", "초급(중)", "초급(상)", 
-                "중급(초)", "중급(중)", "중급(상)",
-                "상급(초)", "상급(중)", "상급(상)"
-            ])
-            
-            num_problems = st.slider("생성할 문제 수:", 1, 10, 5)
-            
-            # 사용 가능한 API 모델 목록 생성
-            available_models = []
-            if st.session_state.openai_api_key:
-                available_models.append("OpenAI GPT")
-            if st.session_state.gemini_api_key:
-                available_models.append("Gemini")
-            
-            api_model = st.radio("사용할 AI 모델:", available_models, horizontal=True)
-            
-            if st.button("AI 문제 생성하기"):
-                with st.spinner("AI가 문제를 생성하고 있습니다..."):
-                    problems = generate_ai_problems(ai_topic, ai_level, num_problems, api_model)
-                    if problems:
-                        for p in problems:
-                            problem_key = f"{ai_topic}/{p['name']}"
-                            st.session_state.teacher_problems[problem_key] = {
-                                "category": ai_topic,
-                                "question": p["question"],
-                                "context": p["context"],
-                                "type": p["type"],
-                                "level": ai_level,
-                                "created_by": st.session_state.username,
-                                "created_at": datetime.datetime.now().isoformat()
-                            }
-                            if p["type"] == "multiple_choice":
-                                st.session_state.teacher_problems[problem_key].update({
-                                    "options": p["options"],
-                                    "correct_answer": p["correct_answer"]
-                                })
-                            else:
-                                st.session_state.teacher_problems[problem_key]["example"] = p["example"]
+            # 임시 API 키 저장
+            if st.button("API 키 적용", key="apply_key_manage"):
+                st.session_state.openai_api_key = temp_openai_key
+                st.session_state.gemini_api_key = temp_gemini_key
+                if temp_gemini_key:
+                    genai.configure(api_key=temp_gemini_key)
+                st.success("API 키가 적용되었습니다.")
+                
+                # 키를 환경 변수로 저장할지 여부 선택
+                save_api_to_env = st.checkbox("API 키를 환경 변수(.env)에 영구 저장", value=False, key="save_env_manage")
+                if save_api_to_env:
+                    try:
+                        # 기존 환경 변수 읽기
+                        env_content = {}
+                        try:
+                            with open(".env", "r") as f:
+                                for line in f:
+                                    if '=' in line:
+                                        key, value = line.strip().split('=', 1)
+                                        env_content[key] = value
+                        except:
+                            pass
                         
-                        save_users_data()
-                        st.success(f"{len(problems)}개의 문제가 생성되어 저장되었습니다.")
+                        # 새 API 키 추가/업데이트
+                        if temp_openai_key:
+                            env_content["OPENAI_API_KEY"] = temp_openai_key
+                        if temp_gemini_key:
+                            env_content["GEMINI_API_KEY"] = temp_gemini_key
+                        
+                        # 파일에 저장
+                        with open(".env", "w") as f:
+                            for key, value in env_content.items():
+                                f.write(f"{key}={value}\n")
+                        
+                        st.success("API 키가 환경 변수에 저장되었습니다.")
+                    except Exception as e:
+                        st.error(f"API 키 저장 중 오류 발생: {e}")
+        
+        st.markdown("---")
+        generate_ai_problems()
 
 def teacher_student_management():
     st.header("학생 관리")
@@ -1205,6 +1456,30 @@ def admin_api_settings():
     
     st.info("이 페이지에서 OpenAI 및 Google Gemini API 키를 설정할 수 있습니다. API 키는 암호화되지 않고 저장되므로 주의하세요.")
     
+    # API 키 유지/리셋 옵션
+    st.subheader("API 키 관리 옵션")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("API 키 유지하기"):
+            st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+            st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+            st.success("API 키가 환경 변수에서 다시 로드되었습니다.")
+    
+    with col2:
+        if st.button("API 키 초기화"):
+            st.session_state.openai_api_key = ""
+            st.session_state.gemini_api_key = ""
+            try:
+                with open(".env", "w") as f:
+                    f.write("OPENAI_API_KEY=\n")
+                    f.write("GEMINI_API_KEY=\n")
+                st.success("API 키가 초기화되었습니다.")
+            except Exception as e:
+                st.error(f"API 키 초기화 중 오류가 발생했습니다: {e}")
+    
+    st.markdown("---")
+    
     # OpenAI API 키 설정
     st.subheader("OpenAI API 키")
     openai_api_key = st.text_input(
@@ -1464,12 +1739,18 @@ def admin_backup_restore():
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 
                 if backup_format == "JSON":
-                    # JSON 백업
+                    # JSON 백업 - API 키 제외
                     users_data = {
                         "users": st.session_state.users,
                         "teacher_problems": st.session_state.teacher_problems,
                         "student_records": st.session_state.student_records
                     }
+                    # API 키 관련 데이터 제거
+                    if 'openai_api_key' in users_data:
+                        del users_data['openai_api_key']
+                    if 'gemini_api_key' in users_data:
+                        del users_data['gemini_api_key']
+                    
                     json_str = json.dumps(users_data, ensure_ascii=False, indent=4)
                     
                     st.download_button(
@@ -1481,7 +1762,7 @@ def admin_backup_restore():
                 
                 else:
                     # CSV 백업
-                    # 사용자 데이터
+                    # 사용자 데이터 (API 키 제외)
                     users_df = pd.DataFrame([
                         {
                             "username": username,
@@ -1810,6 +2091,143 @@ def admin_system_info():
             st.write(f"**{activity['timestamp'].strftime('%Y-%m-%d %H:%M')}** - {activity['activity']}")
     else:
         st.info("최근 활동 기록이 없습니다.")
+
+def view_teacher_problems():
+    if 'teacher_problems' in st.session_state and st.session_state.teacher_problems:
+        st.subheader("저장된 문제 목록")
+        
+        # 필터 옵션
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            filter_school = st.selectbox("학교급 필터:", ["전체", "중학교", "고등학교"])
+        with col2:
+            filter_grade = st.selectbox("학년 필터:", ["전체", "1학년", "2학년", "3학년"])
+        with col3:
+            filter_difficulty = st.selectbox("난이도 필터:", ["전체", "상", "중", "하"])
+        
+        # 필터링된 문제 목록 표시
+        filtered_problems = {}
+        for key, problem in st.session_state.teacher_problems.items():
+            if (filter_school == "전체" or problem.get("school_type") == filter_school) and \
+               (filter_grade == "전체" or problem.get("grade") == filter_grade) and \
+               (filter_difficulty == "전체" or problem.get("difficulty") == filter_difficulty):
+                filtered_problems[key] = problem
+        
+        if filtered_problems:
+            for key, problem in filtered_problems.items():
+                with st.expander(f"{problem.get('school_type', '')} {problem.get('grade', '')} - {problem.get('topic', '')} ({problem.get('difficulty', '')})"):
+                    st.text(f"작성자: {problem.get('created_by', '')}")
+                    st.text(f"작성일: {problem.get('created_at', '')}")
+                    st.markdown("---")
+                    st.markdown(problem.get('content', ''))
+                    
+                    # 문제 수정/삭제 버튼
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button(f"수정 ({key})", key=f"edit_{key}"):
+                            edited_content = st.text_area(
+                                "문제 내용 수정",
+                                value=problem.get('content', ''),
+                                height=400,
+                                key=f"edit_area_{key}"
+                            )
+                            if st.button(f"수정 사항 저장", key=f"save_{key}"):
+                                st.session_state.teacher_problems[key]['content'] = edited_content
+                                save_users_data()
+                                st.success("문제가 수정되었습니다.")
+                                st.rerun()
+                    
+                    with col2:
+                        if st.button(f"삭제 ({key})", key=f"delete_{key}"):
+                            if key in st.session_state.teacher_problems:
+                                del st.session_state.teacher_problems[key]
+                                save_users_data()
+                                st.success(f"문제가 삭제되었습니다.")
+                                st.rerun()
+        else:
+            st.info("선택한 필터에 해당하는 문제가 없습니다.")
+    else:
+        st.info("저장된 문제가 없습니다.")
+
+def display_and_solve_problem(problem_key, problem_data):
+    """문제를 표시하고 학생이 풀 수 있도록 하는 함수"""
+    st.write("**문제:**")
+    st.write(problem_data["question"])
+    
+    st.write("**맥락:**")
+    st.write(problem_data["context"])
+    
+    # 답변 입력
+    user_answer = st.text_area("답변을 입력하세요:", height=150)
+    
+    if st.button("답변 제출"):
+        if not user_answer.strip():
+            st.error("답변을 입력해주세요.")
+            return
+        
+        # AI 첨삭 생성
+        try:
+            feedback = generate_feedback(problem_data, user_answer)
+            
+            # 학생 기록 저장
+            username = st.session_state.username
+            if username not in st.session_state.student_records:
+                st.session_state.student_records[username] = {
+                    "solved_problems": [],
+                    "total_problems": 0
+                }
+            
+            # 문제 풀이 기록 추가
+            st.session_state.student_records[username]["solved_problems"].append({
+                "problem": problem_data,
+                "answer": user_answer,
+                "feedback": feedback,
+                "timestamp": datetime.datetime.now().isoformat()
+            })
+            
+            # 총 문제 수 증가
+            st.session_state.student_records[username]["total_problems"] += 1
+            
+            # 데이터 저장
+            save_users_data()
+            
+            # 결과 표시
+            st.success("답변이 제출되었습니다!")
+            st.markdown("### AI 첨삭 결과")
+            st.markdown(feedback)
+            
+        except Exception as e:
+            st.error(f"첨삭 생성 중 오류가 발생했습니다: {str(e)}")
+
+def generate_feedback(problem_data, user_answer):
+    """AI를 사용하여 학생의 답변에 대한 첨삭을 생성하는 함수"""
+    try:
+        # OpenAI API 사용 시도
+        if st.session_state.openai_api_key:
+            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+            prompt = get_correction_prompt(problem_data, user_answer)
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+        
+        # Gemini API 사용 시도
+        elif st.session_state.gemini_api_key:
+            model = genai.GenerativeModel('gemini-pro')
+            prompt = get_correction_prompt(problem_data, user_answer)
+            
+            response = model.generate_content(prompt)
+            return response.text
+        
+        else:
+            raise Exception("API 키가 설정되지 않았습니다.")
+    
+    except Exception as e:
+        raise Exception(f"첨삭 생성 중 오류 발생: {str(e)}")
 
 # Main app function
 def main():
