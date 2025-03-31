@@ -1,6 +1,10 @@
 import streamlit as st
 import os
-import openai
+# OpenAI 모듈 임포트 수정
+try:
+    from openai import OpenAI
+except ImportError:
+    import openai
 import pandas as pd
 import numpy as np
 import json
@@ -2985,3 +2989,115 @@ def main():
 # Run the app
 if __name__ == "__main__":
     main()
+
+# CSV 샘플 생성 함수 추가
+def create_sample_csv():
+    """샘플 CSV 파일 생성"""
+    data = [
+        {
+            "school_type": "중학교",
+            "grade": "1학년",
+            "topic": "일상생활/자기소개",
+            "difficulty": "하",
+            "question_type": "객관식",
+            "question": "What is your name?",
+            "context": "Basic personal introduction",
+            "options": "A. My name is John. B. I am from Korea. C. I am 15 years old. D. I live in Seoul.",
+            "answer": "A",
+            "explanation": "This is how to introduce your name in English."
+        },
+        {
+            "school_type": "중학교",
+            "grade": "2학년",
+            "topic": "학교생활/교육",
+            "difficulty": "중",
+            "question_type": "주관식",
+            "question": "What subject do you like the most?",
+            "context": "Talking about school subjects",
+            "options": "",
+            "answer": "I like (subject) the most because...",
+            "explanation": "When talking about preferences, you can use 'like the most' to express your favorite."
+        },
+        {
+            "school_type": "고등학교",
+            "grade": "1학년",
+            "topic": "환경/사회문제",
+            "difficulty": "상",
+            "question_type": "서술형",
+            "question": "What can we do to protect the environment?",
+            "context": "Environmental issues",
+            "options": "",
+            "answer": "There are several ways to protect the environment...",
+            "explanation": "This question requires using vocabulary related to environmental protection and solutions."
+        }
+    ]
+    
+    df = pd.DataFrame(data)
+    csv_data = df.to_csv(index=False)
+    return csv_data
+
+def save_learning_record(problems, answers, elapsed_time):
+    """학생의 학습 기록을 저장하는 함수"""
+    try:
+        # 현재 사용자 정보
+        username = st.session_state.username
+        
+        # 사용자 기록이 없으면 초기화
+        if username not in st.session_state.student_records:
+            st.session_state.student_records[username] = {
+                "solved_problems": [],
+                "total_problems": 0,
+                "feedback_history": []
+            }
+        
+        # 기록할 문제 정보 준비
+        record_time = datetime.datetime.now().isoformat()
+        problems_data = []
+        
+        for i, (problem_id, problem_data) in enumerate(problems):
+            answer = answers[i] if i < len(answers) else ""
+            
+            problem_record = {
+                "problem_id": problem_id,
+                "question": problem_data.get("question", ""),
+                "answer": answer,
+                "correct_answer": problem_data.get("answer", ""),
+                "is_correct": answer.strip().upper() == problem_data.get("answer", "").strip().upper() 
+                              if problem_data.get("question_type", "") == "객관식" else None,
+                "timestamp": record_time
+            }
+            
+            problems_data.append(problem_record)
+            
+            # 개별 문제 풀이 기록 추가
+            st.session_state.student_records[username]["solved_problems"].append({
+                "problem": problem_data,
+                "answer": answer,
+                "timestamp": record_time
+            })
+        
+        # 총 문제 수 업데이트
+        st.session_state.student_records[username]["total_problems"] += len(problems)
+        
+        # 풀이 세션 기록 추가
+        session_record = {
+            "session_date": record_time,
+            "problems_count": len(problems),
+            "answered_count": len([a for a in answers if a]),
+            "elapsed_time": elapsed_time,
+            "problems": problems_data
+        }
+        
+        # 기록 저장
+        if "sessions" not in st.session_state.student_records[username]:
+            st.session_state.student_records[username]["sessions"] = []
+            
+        st.session_state.student_records[username]["sessions"].append(session_record)
+        
+        # 사용자 데이터 저장
+        save_users_data()
+        
+        return True
+    except Exception as e:
+        st.error(f"학습 기록 저장 중 오류가 발생했습니다: {str(e)}")
+        return False
