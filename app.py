@@ -154,25 +154,40 @@ def register_user(username, password, role, name, email, created_by=None):
 def login_page():
     st.title("AI 영어 첨삭 앱 - 로그인")
     
-    login_tab, register_tab = st.tabs(["로그인", "계정 만들기"])
+    # 로그인 폼
+    username = st.text_input("사용자 이름", key="login_username")
+    password = st.text_input("비밀번호", type="password", key="login_password")
     
-    with login_tab:
-        username = st.text_input("사용자 이름", key="login_username")
-        password = st.text_input("비밀번호", type="password", key="login_password")
-        
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            login_button = st.button("로그인")
-        
-        if login_button:
-            if login_user(username, password):
-                st.success("로그인 성공!")
-                st.rerun()
-            else:
-                st.error("사용자 이름 또는 비밀번호가 올바르지 않습니다.")
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        login_button = st.button("로그인")
     
-    with register_tab:
-        st.info("새 계정 만들기는 관리자 또는 교사만 가능합니다.")
+    if login_button:
+        if login_user(username, password):
+            st.success("로그인 성공!")
+            st.rerun()
+        else:
+            st.error("사용자 이름 또는 비밀번호가 올바르지 않습니다.")
+    
+    # 역할별 안내 메시지
+    st.markdown("---")
+    st.info("""
+    ### 역할별 안내
+    
+    **학생**
+    - 문제 풀기 및 학습 기록 확인
+    - AI 첨삭 받기
+    
+    **교사**
+    - 문제 출제 및 관리
+    - 학생 등록 및 관리
+    - 학생 답변 채점 및 첨삭
+    
+    **관리자**
+    - 시스템 전체 관리
+    - API 키 설정
+    - 데이터 백업 및 복원
+    """)
 
 # Student Dashboard
 def student_dashboard():
