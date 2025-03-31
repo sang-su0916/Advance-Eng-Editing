@@ -14,12 +14,16 @@ from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
 
+# 전역 변수로 Gemini 모듈 사용 가능 여부 저장
+GEMINI_AVAILABLE = False
+
 # Load environment variables first
 load_dotenv()
 
 # Initialize API configurations
 try:
     import google.generativeai as genai
+    GEMINI_AVAILABLE = True
     if 'gemini_api_key' in st.session_state and st.session_state.gemini_api_key:
         genai.configure(api_key=st.session_state.gemini_api_key)
 except ImportError:
@@ -170,6 +174,61 @@ def register_user(username, password, role, name, email, created_by=None):
     
     save_users_data()
     return True, "사용자가 성공적으로 등록되었습니다."
+
+def generate_feedback(problem, user_answer):
+    """
+    OpenAI 또는 Gemini API를 사용하여 영어 작문에 대한 첨삭 생성
+    
+    Args:
+        problem (dict): 문제 정보가 담긴 딕셔너리
+        user_answer (str): 사용자의 답변
+        
+    Returns:
+        str: 생성된 첨삭 내용 (HTML/마크다운 형식)
+    """
+    try:
+        # OpenAI 먼저 시도
+        if st.session_state.openai_api_key:
+            prompt = get_correction_prompt(problem, user_answer)
+            
+            try:
+                client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are an expert English teacher."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=1500
+                )
+                
+                return response.choices[0].message.content
+            except Exception as e:
+                st.error(f"OpenAI API 오류: {str(e)}")
+        
+        # Gemini 시도
+        if st.session_state.gemini_api_key and GEMINI_AVAILABLE:
+            prompt = get_correction_prompt(problem, user_answer)
+            
+            try:
+                genai.configure(api_key=st.session_state.gemini_api_key)
+                model = genai.GenerativeModel('gemini-pro')
+                response = model.generate_content(prompt)
+                return response.text
+            except Exception as e:
+                st.error(f"Gemini API 오류: {str(e)}")
+        
+        # 둘 다 실패한 경우
+        if not st.session_state.openai_api_key and (not st.session_state.gemini_api_key or not GEMINI_AVAILABLE):
+            st.error("API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
+            return None
+        
+        return "API 오류로 인해 첨삭을 생성할 수 없습니다. 관리자에게 문의하세요."
+    
+    except Exception as e:
+        st.error(f"첨삭 생성 중 오류가 발생했습니다: {str(e)}")
+        return None
 
 # Login page
 def login_page():
@@ -441,7 +500,7 @@ def teacher_dashboard():
 def check_api_key():
     """API 키 유효성을 확인하는 함수"""
     has_openai = bool(st.session_state.openai_api_key.strip())
-    has_gemini = bool(st.session_state.gemini_api_key.strip())
+    has_gemini = bool(st.session_state.gemini_api_key.strip()) and GEMINI_AVAILABLE
     return has_openai or has_gemini
 
 def generate_ai_problems(topic, level, num_problems, api_model):
@@ -464,17 +523,21 @@ def generate_ai_problems(topic, level, num_problems, api_model):
             )
             return json.loads(response.choices[0].message.content)
         
-        elif api_model == "Gemini" and st.session_state.gemini_api_key:
+        elif api_model == "Gemini" and st.session_state.gemini_api_key and GEMINI_AVAILABLE:
             # Gemini API를 사용하여 문제 생성
-            genai.configure(api_key=st.session_state.gemini_api_key)
-            model = genai.GenerativeModel('gemini-pro')
-            prompt = f"""
-            Create {num_problems} English practice problems on the topic of {topic} at {level} level.
-            The ratio should be: 80% multiple choice, 20% open-ended questions.
-            Return in JSON format with fields: name, type, question, context, options (for MC), correct_answer, example (for open-ended).
-            """
-            response = model.generate_content(prompt)
-            return json.loads(response.text)
+            try:
+                genai.configure(api_key=st.session_state.gemini_api_key)
+                model = genai.GenerativeModel('gemini-pro')
+                prompt = f"""
+                Create {num_problems} English practice problems on the topic of {topic} at {level} level.
+                The ratio should be: 80% multiple choice, 20% open-ended questions.
+                Return in JSON format with fields: name, type, question, context, options (for MC), correct_answer, example (for open-ended).
+                """
+                response = model.generate_content(prompt)
+                return json.loads(response.text)
+            except NameError:
+                st.error("Gemini API 모듈이 올바르게 로드되지 않았습니다. 'pip install google-generativeai' 명령어로 설치해주세요.")
+                return None
         
         else:
             raise ValueError("선택한 AI 모델의 API 키가 설정되지 않았습니다.")
@@ -726,36 +789,39 @@ def teacher_problem_management():
             available_models = []
             if st.session_state.openai_api_key:
                 available_models.append("OpenAI GPT")
-            if st.session_state.gemini_api_key:
+            if st.session_state.gemini_api_key and GEMINI_AVAILABLE:
                 available_models.append("Gemini")
             
-            api_model = st.radio("사용할 AI 모델:", available_models, horizontal=True)
-            
-            if st.button("AI 문제 생성하기"):
-                with st.spinner("AI가 문제를 생성하고 있습니다..."):
-                    problems = generate_ai_problems(ai_topic, ai_level, num_problems, api_model)
-                    if problems:
-                        for p in problems:
-                            problem_key = f"{ai_topic}/{p['name']}"
-                            st.session_state.teacher_problems[problem_key] = {
-                                "category": ai_topic,
-                                "question": p["question"],
-                                "context": p["context"],
-                                "type": p["type"],
-                                "level": ai_level,
-                                "created_by": st.session_state.username,
-                                "created_at": datetime.datetime.now().isoformat()
-                            }
-                            if p["type"] == "multiple_choice":
-                                st.session_state.teacher_problems[problem_key].update({
-                                    "options": p["options"],
-                                    "correct_answer": p["correct_answer"]
-                                })
-                            else:
-                                st.session_state.teacher_problems[problem_key]["example"] = p["example"]
-                        
-                        save_users_data()
-                        st.success(f"{len(problems)}개의 문제가 생성되어 저장되었습니다.")
+            if not available_models:
+                st.warning("사용 가능한 AI 모델이 없습니다. API 키를 확인해주세요.")
+            else:
+                api_model = st.radio("사용할 AI 모델:", available_models, horizontal=True)
+                
+                if st.button("AI 문제 생성하기"):
+                    with st.spinner("AI가 문제를 생성하고 있습니다..."):
+                        problems = generate_ai_problems(ai_topic, ai_level, num_problems, api_model)
+                        if problems:
+                            for p in problems:
+                                problem_key = f"{ai_topic}/{p['name']}"
+                                st.session_state.teacher_problems[problem_key] = {
+                                    "category": ai_topic,
+                                    "question": p["question"],
+                                    "context": p["context"],
+                                    "type": p["type"],
+                                    "level": ai_level,
+                                    "created_by": st.session_state.username,
+                                    "created_at": datetime.datetime.now().isoformat()
+                                }
+                                if p["type"] == "multiple_choice":
+                                    st.session_state.teacher_problems[problem_key].update({
+                                        "options": p["options"],
+                                        "correct_answer": p["correct_answer"]
+                                    })
+                                else:
+                                    st.session_state.teacher_problems[problem_key]["example"] = p["example"]
+                            
+                            save_users_data()
+                            st.success(f"{len(problems)}개의 문제가 생성되어 저장되었습니다.")
 
 def teacher_student_management():
     st.header("학생 관리")
@@ -1245,7 +1311,7 @@ def admin_api_settings():
                 f.write(f"GEMINI_API_KEY={gemini_api_key.strip()}\n")
             st.success("Gemini API 키가 저장되었습니다.")
             # Gemini API 초기화
-            if gemini_api_key.strip():
+            if gemini_api_key.strip() and GEMINI_AVAILABLE:
                 genai.configure(api_key=gemini_api_key.strip())
         except Exception as e:
             st.error(f"API 키 저장 중 오류가 발생했습니다: {e}")
@@ -1284,6 +1350,8 @@ def admin_api_settings():
         elif test_option == "Gemini":
             if not st.session_state.gemini_api_key:
                 st.error("Gemini API 키가 설정되지 않았습니다.")
+            elif not GEMINI_AVAILABLE:
+                st.error("Gemini API 모듈이 설치되지 않았습니다. 'pip install google-generativeai' 명령어로 설치해주세요.")
             else:
                 try:
                     with st.spinner("Gemini API 연결 테스트 중..."):
@@ -1664,6 +1732,59 @@ def admin_backup_restore():
                 
                 except Exception as e:
                     st.error(f"ZIP 파일 처리 중 오류가 발생했습니다: {e}")
+
+def display_and_solve_problem(problem_key, problem_data):
+    st.subheader("문제")
+    st.write(problem_data["question"])
+    
+    st.subheader("문제 맥락")
+    st.write(problem_data["context"])
+    
+    # 사용자 답변 입력
+    user_answer = st.text_area("답변 작성하기:", height=200)
+    
+    # 제출 버튼
+    if st.button("답변 제출하기"):
+        if not user_answer.strip():
+            st.error("답변을 입력해주세요.")
+            return
+        
+        # 피드백 생성
+        with st.spinner("AI 첨삭을 생성하고 있습니다..."):
+            feedback = generate_feedback(problem_data, user_answer)
+            
+            if feedback:
+                # 답변 및 피드백 저장
+                username = st.session_state.username
+                if username not in st.session_state.student_records:
+                    st.session_state.student_records[username] = {
+                        "solved_problems": [],
+                        "total_problems": 0,
+                        "feedback_history": []
+                    }
+                
+                # 새로운 학습 기록 추가
+                st.session_state.student_records[username]["solved_problems"].append({
+                    "problem": problem_data,
+                    "answer": user_answer,
+                    "feedback": feedback,
+                    "timestamp": datetime.datetime.now().isoformat()
+                })
+                
+                # 총 문제 수 증가
+                st.session_state.student_records[username]["total_problems"] += 1
+                
+                # 데이터 저장
+                save_users_data()
+                
+                # 결과 표시
+                st.success("답변이 제출되었습니다. AI 첨삭을 확인하세요.")
+                
+                # 첨삭 표시
+                st.subheader("AI 첨삭 결과")
+                st.markdown(feedback)
+            else:
+                st.error("첨삭 생성에 실패했습니다. 다시 시도해주세요.")
 
 def admin_system_info():
     st.header("시스템 정보")
