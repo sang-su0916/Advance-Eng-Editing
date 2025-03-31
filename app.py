@@ -1380,8 +1380,6 @@ def generate_ai_problems():
                         if success:
                             st.success(message)
                             st.rerun()
-                        else:
-                            st.error(message)
                 else:
                     st.error("문제 생성에 실패했습니다. API 키를 확인하고 다시 시도해주세요.")
             
@@ -1524,3 +1522,805 @@ def teacher_problem_management():
         - explanation: 해설
         """)
         
+def save_learning_record(problems, answers, elapsed_time):
+    """학생의 학습 기록을 저장하는 함수"""
+    try:
+        # 현재 사용자 정보
+        username = st.session_state.username
+        
+        # 사용자 기록이 없으면 초기화
+        if username not in st.session_state.student_records:
+            st.session_state.student_records[username] = {
+                "solved_problems": [],
+                "total_problems": 0,
+                "feedback_history": []
+            }
+        
+        # 학습 기록 추가
+        for i, (problem_id, problem_data) in enumerate(problems):
+            # 인덱스 범위 내에서만 처리
+            if i < len(answers):
+                # 학습 결과 저장
+                feedback = ""
+                try:
+                    # 답변과 정답이 있는 경우에만 피드백 생성
+                    if answers[i] and problem_data.get('answer', ''):
+                        feedback = generate_feedback(problem_data, answers[i])
+                except Exception as e:
+                    feedback = f"피드백 생성 중 오류: {str(e)}"
+                
+                # 기록 추가
+                problem_record = {
+                    "problem_id": problem_id,
+                    "problem": problem_data,
+                    "answer": answers[i],
+                    "feedback": feedback,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "elapsed_time": elapsed_time
+                }
+                
+                st.session_state.student_records[username]["solved_problems"].append(problem_record)
+        
+        # 총 문제 수 업데이트
+        st.session_state.student_records[username]["total_problems"] += len(problems)
+        
+        # 데이터 저장
+        save_users_data()
+        
+        return True
+    except Exception as e:
+        st.error(f"학습 기록 저장 중 오류가 발생했습니다: {str(e)}")
+        return False
+
+def teacher_student_management():
+    """교사가 학생을 관리하는 기능"""
+    st.header("학생 관리")
+    
+    # 교사가 등록한 학생만 필터링
+    teacher_username = st.session_state.username
+    teacher_students = {k: v for k, v in st.session_state.users.items() 
+                       if v.get("role") == "student" and v.get("created_by") == teacher_username}
+    
+    # 탭 구성
+    tab1, tab2, tab3 = st.tabs(["학생 등록", "학생 목록", "학습 진도 관리"])
+    
+    # 학생 등록 탭
+    with tab1:
+        st.subheader("새 학생 등록")
+        
+        username = st.text_input("학생 아이디:", key="new_student_username")
+        name = st.text_input("이름:", key="new_student_name")
+        email = st.text_input("이메일 (선택):", key="new_student_email")
+        password = st.text_input("초기 비밀번호:", type="password", key="new_student_password")
+        confirm_password = st.text_input("비밀번호 확인:", type="password", key="new_student_confirm")
+        
+        if st.button("학생 등록", key="register_student"):
+            if not username or not name or not password:
+                st.error("아이디, 이름, 비밀번호는 필수 입력사항입니다.")
+            elif password != confirm_password:
+                st.error("비밀번호와 비밀번호 확인이 일치하지 않습니다.")
+            elif username in st.session_state.users:
+                st.error(f"이미 존재하는 아이디입니다: {username}")
+            elif len(password) < 6:
+                st.error("비밀번호는 최소 6자 이상이어야 합니다.")
+            else:
+                # 학생 등록
+                success, message = register_user(
+                    username, 
+                    password, 
+                    "student", 
+                    name, 
+                    email, 
+                    created_by=teacher_username
+                )
+                
+                if success:
+                    st.success(f"학생 '{name}'이(가) 성공적으로 등록되었습니다.")
+                    st.rerun()
+                else:
+                    st.error(message)
+    
+    # 학생 목록 탭
+    with tab2:
+        st.subheader("등록된 학생 목록")
+        
+        if not teacher_students:
+            st.info("등록된 학생이 없습니다. '학생 등록' 탭에서 새 학생을 등록해주세요.")
+        else:
+            # 표로 보여주기
+            student_data_list = []
+            for username, user_data in teacher_students.items():
+                try:
+                    created_at = datetime.datetime.fromisoformat(user_data.get("created_at", "")).strftime("%Y-%m-%d")
+                except:
+                    created_at = user_data.get("created_at", "")
+                
+                # 학습 통계 계산
+                total_problems = 0
+                if username in st.session_state.student_records:
+                    total_problems = st.session_state.student_records[username].get("total_problems", 0)
+                
+                student_data_list.append({
+                    "아이디": username,
+                    "이름": user_data.get("name", ""),
+                    "이메일": user_data.get("email", ""),
+                    "등록일": created_at,
+                    "푼 문제 수": total_problems
+                })
+            
+            df = pd.DataFrame(student_data_list)
+            st.dataframe(df, use_container_width=True)
+            
+            # 학생 삭제
+            st.subheader("학생 삭제")
+            selected_student = st.selectbox(
+                "삭제할 학생 선택:",
+                list(teacher_students.keys()),
+                format_func=lambda x: f"{x} ({teacher_students[x].get('name', '')})"
+            )
+            
+            if selected_student:
+                st.warning(f"주의: 학생 계정을 삭제하면 모든 학습 기록도 함께 삭제됩니다.")
+                st.info(f"삭제할 학생: {selected_student} ({teacher_students[selected_student].get('name', '')})")
+                
+                confirm_delete = st.checkbox("삭제를 확인합니다")
+                
+                if st.button("선택한 학생 삭제") and confirm_delete:
+                    # 학생 삭제
+                    if selected_student in st.session_state.users:
+                        del st.session_state.users[selected_student]
+                        
+                        # 학생 기록도 삭제
+                        if selected_student in st.session_state.student_records:
+                            del st.session_state.student_records[selected_student]
+                        
+                        save_users_data()
+                        st.success(f"학생 '{selected_student}'이(가) 삭제되었습니다.")
+                        st.rerun()
+    
+    # 학습 진도 관리 탭
+    with tab3:
+        st.subheader("학생 학습 진도 관리")
+        
+        if not teacher_students:
+            st.info("등록된 학생이 없습니다.")
+        else:
+            selected_student = st.selectbox(
+                "학생 선택:",
+                list(teacher_students.keys()),
+                format_func=lambda x: f"{x} ({teacher_students[x].get('name', '')})",
+                key="progress_student"
+            )
+            
+            if selected_student:
+                student_name = teacher_students[selected_student].get("name", selected_student)
+                st.write(f"**{student_name}** 학생의 학습 현황")
+                
+                # 학습 통계
+                if selected_student in st.session_state.student_records:
+                    student_data = st.session_state.student_records[selected_student]
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("총 학습 문제 수", student_data.get("total_problems", 0))
+                    
+                    with col2:
+                        # 이번 주에 푼 문제 수
+                        week_problems = 0
+                        today = datetime.datetime.now()
+                        week_start = today - datetime.timedelta(days=today.weekday())
+                        
+                        for problem in student_data.get("solved_problems", []):
+                            try:
+                                problem_time = datetime.datetime.fromisoformat(problem["timestamp"])
+                                if problem_time >= week_start:
+                                    week_problems += 1
+                            except:
+                                pass
+                        
+                        st.metric("이번 주 학습 수", week_problems)
+                    
+                    with col3:
+                        # 오늘 푼 문제 수
+                        today_problems = 0
+                        today_start = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                        
+                        for problem in student_data.get("solved_problems", []):
+                            try:
+                                problem_time = datetime.datetime.fromisoformat(problem["timestamp"])
+                                if problem_time >= today_start:
+                                    today_problems += 1
+                            except:
+                                pass
+                        
+                        st.metric("오늘 학습 수", today_problems)
+                    
+                    # 학습 기록 표시
+                    if student_data.get("solved_problems"):
+                        st.subheader("최근 학습 기록")
+                        
+                        recent_problems = sorted(
+                            student_data["solved_problems"], 
+                            key=lambda x: x["timestamp"] if "timestamp" in x else "", 
+                            reverse=True
+                        )
+                        
+                        for i, problem in enumerate(recent_problems[:5]):  # 최근 5개만 표시
+                            try:
+                                with st.expander(f"{i+1}. {problem['problem']['question'][:50]}... ({datetime.datetime.fromisoformat(problem['timestamp']).strftime('%Y-%m-%d %H:%M')})"):
+                                    st.write("**문제:**", problem["problem"]["question"])
+                                    st.write("**학생 답변:**", problem["answer"])
+                                    st.markdown("**AI 첨삭:**")
+                                    st.markdown(problem["feedback"])
+                            except Exception as e:
+                                st.error(f"기록 {i+1}을 표시하는 데 문제가 발생했습니다: {str(e)}")
+                    else:
+                        st.info("아직 학습 기록이 없습니다.")
+                else:
+                    st.info("이 학생은 아직 문제를 풀지 않았습니다.")
+        
+def teacher_grading():
+    """교사 채점 및 첨삭 기능"""
+    st.header("채점 및 첨삭")
+    
+    # 교사가 등록한 학생만 필터링
+    teacher_username = st.session_state.username
+    teacher_students = {k: v for k, v in st.session_state.users.items() 
+                       if v.get("role") == "student" and v.get("created_by") == teacher_username}
+    
+    if not teacher_students:
+        st.info("등록된 학생이 없습니다. '학생 관리' 메뉴에서 학생을 먼저 등록해주세요.")
+        return
+    
+    # 학생 선택
+    selected_student = st.selectbox(
+        "학생 선택:",
+        list(teacher_students.keys()),
+        format_func=lambda x: f"{x} ({teacher_students[x].get('name', '')})"
+    )
+    
+    if not selected_student:
+        st.info("학생을 선택해주세요.")
+        return
+    
+    # 선택한 학생의 데이터 확인
+    if selected_student not in st.session_state.student_records:
+        st.info(f"선택한 학생({teacher_students[selected_student].get('name', '')})의 학습 기록이 없습니다.")
+        return
+    
+    student_data = st.session_state.student_records[selected_student]
+    
+    # 학생이 푼 문제 목록 표시
+    st.subheader(f"{teacher_students[selected_student].get('name', '')}의 채점 대상 문제")
+    
+    if not student_data.get("solved_problems"):
+        st.info("이 학생은 아직 문제를 풀지 않았습니다.")
+        return
+    
+    # 문제 목록을 날짜별로 정렬
+    solved_problems = sorted(
+        student_data["solved_problems"], 
+        key=lambda x: x["timestamp"] if "timestamp" in x else "", 
+        reverse=True
+    )
+    
+    # 채점할 문제 선택
+    problem_options = [
+        f"{i+1}. {problem['problem']['question'][:40]}... ({datetime.datetime.fromisoformat(problem['timestamp']).strftime('%Y-%m-%d %H:%M')})"
+        for i, problem in enumerate(solved_problems)
+        if "timestamp" in problem
+    ]
+    
+    selected_problem_idx = st.selectbox(
+        "채점할 문제 선택:",
+        range(len(problem_options)),
+        format_func=lambda i: problem_options[i] if i < len(problem_options) else ""
+    )
+    
+    if selected_problem_idx is not None and selected_problem_idx < len(solved_problems):
+        # 선택한 문제 정보
+        problem = solved_problems[selected_problem_idx]
+        
+        # 문제 및 답변 정보 표시
+        st.markdown("### 문제 정보")
+        st.markdown(f"**문제:** {problem['problem']['question']}")
+        
+        if 'context' in problem['problem'] and problem['problem']['context']:
+            st.markdown(f"**상황:** {problem['problem']['context']}")
+        
+        st.markdown(f"**정답:** {problem['problem'].get('answer', 'N/A')}")
+        
+        st.markdown("### 학생 답변")
+        st.markdown(f"**제출 답변:** {problem['answer']}")
+        
+        # 기존 피드백 표시
+        st.markdown("### 현재 AI 피드백")
+        st.markdown(problem.get('feedback', '피드백이 없습니다.'))
+        
+        # 교사 피드백 입력
+        st.markdown("### 교사 첨삭")
+        teacher_feedback = st.text_area(
+            "추가 피드백을 입력하세요:",
+            height=150,
+            key="teacher_feedback"
+        )
+        
+        if st.button("피드백 저장"):
+            # 기존 피드백에 교사 피드백 추가
+            updated_feedback = problem.get('feedback', '') + "\n\n**교사 첨삭:**\n" + teacher_feedback
+            
+            # 피드백 업데이트
+            solved_problems[selected_problem_idx]['feedback'] = updated_feedback
+            solved_problems[selected_problem_idx]['teacher_feedback'] = teacher_feedback
+            solved_problems[selected_problem_idx]['graded_by'] = teacher_username
+            solved_problems[selected_problem_idx]['graded_at'] = datetime.datetime.now().isoformat()
+            
+            # 데이터 저장
+            save_users_data()
+            
+            st.success("첨삭이 저장되었습니다.")
+            st.rerun()
+
+def teacher_profile():
+    """교사 프로필 관리 기능"""
+    st.header("내 프로필")
+    
+    username = st.session_state.username
+    user_data = st.session_state.users[username]
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("기본 정보")
+        st.write(f"**이름:** {user_data['name']}")
+        st.write(f"**이메일:** {user_data['email']}")
+        st.write(f"**사용자 유형:** 교사")
+        
+        if "created_at" in user_data:
+            try:
+                created_at = datetime.datetime.fromisoformat(user_data["created_at"])
+                st.write(f"**가입일:** {created_at.strftime('%Y-%m-%d')}")
+            except:
+                st.write(f"**가입일:** {user_data['created_at']}")
+    
+    with col2:
+        st.subheader("비밀번호 변경")
+        
+        current_password = st.text_input("현재 비밀번호", type="password")
+        new_password = st.text_input("새 비밀번호", type="password")
+        confirm_password = st.text_input("새 비밀번호 확인", type="password")
+        
+        if st.button("비밀번호 변경"):
+            if not current_password or not new_password or not confirm_password:
+                st.error("모든 필드를 입력해주세요.")
+            elif hash_password(current_password) != user_data["password"]:
+                st.error("현재 비밀번호가 올바르지 않습니다.")
+            elif new_password != confirm_password:
+                st.error("새 비밀번호와 확인이 일치하지 않습니다.")
+            elif len(new_password) < 6:
+                st.error("비밀번호는 최소 6자 이상이어야 합니다.")
+            else:
+                st.session_state.users[username]["password"] = hash_password(new_password)
+                save_users_data()
+                st.success("비밀번호가 성공적으로 변경되었습니다.")
+    
+    # 교사 활동 통계
+    st.subheader("활동 통계")
+    
+    # 등록한 문제 수
+    teacher_problems = len([p for p in st.session_state.teacher_problems.values() 
+                           if p.get("created_by") == username])
+    
+    # 등록한 학생 수
+    teacher_students = len([u for u in st.session_state.users.values() 
+                           if u.get("role") == "student" and u.get("created_by") == username])
+    
+    # 첨삭한 문제 수
+    graded_problems = 0
+    for student, data in st.session_state.student_records.items():
+        for problem in data.get("solved_problems", []):
+            if problem.get("graded_by") == username:
+                graded_problems += 1
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("등록한 문제 수", teacher_problems)
+    with col2:
+        st.metric("등록한 학생 수", teacher_students)
+    with col3:
+        st.metric("첨삭한 답변 수", graded_problems)
+    
+    # 전달사항 등록 (관리자에게)
+    st.subheader("관리자에게 전달사항")
+    message = st.text_area("관리자에게 전달할 메시지를 입력하세요:", height=100)
+    
+    if st.button("전달사항 제출"):
+        if not message.strip():
+            st.error("전달할 메시지를 입력해주세요.")
+        else:
+            # 메시지 저장 (실제로는 관리자에게 알림 기능 구현 필요)
+            if "teacher_messages" not in st.session_state:
+                st.session_state.teacher_messages = []
+            
+            st.session_state.teacher_messages.append({
+                "from": username,
+                "name": user_data.get("name", ""),
+                "message": message,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "read": False
+            })
+            
+            save_users_data()
+            st.success("메시지가 관리자에게 전달되었습니다.")
+    
+def view_teacher_problems():
+    """교사가 등록한 문제 목록 조회 및 관리"""
+    st.subheader("문제 목록")
+    
+    # 현재 로그인한 교사가 만든 문제 필터링
+    teacher_username = st.session_state.username
+    teacher_problems = {k: v for k, v in st.session_state.teacher_problems.items() 
+                       if v.get("created_by") == teacher_username}
+    
+    if not teacher_problems:
+        st.info("등록된 문제가 없습니다. '직접 문제 제작' 또는 'AI 문제 생성' 탭에서 문제를 만들어보세요.")
+        return
+    
+    # 검색 및 필터링
+    search_col, filter_col1, filter_col2 = st.columns([3, 1, 1])
+    
+    with search_col:
+        search_term = st.text_input("문제 검색:", placeholder="검색어 입력...")
+    
+    with filter_col1:
+        filter_type = st.selectbox(
+            "학교급 필터:",
+            ["전체"] + list(set(p.get("school_type", "") for p in teacher_problems.values())),
+            key="filter_school_type"
+        )
+    
+    with filter_col2:
+        filter_difficulty = st.selectbox(
+            "난이도 필터:",
+            ["전체", "하", "중", "상"],
+            key="filter_difficulty"
+        )
+    
+    # 필터링된 문제 목록
+    filtered_problems = teacher_problems.copy()
+    
+    # 검색어 필터링
+    if search_term:
+        filtered_problems = {k: v for k, v in filtered_problems.items() 
+                            if search_term.lower() in v.get("question", "").lower()}
+    
+    # 학교급 필터링
+    if filter_type != "전체":
+        filtered_problems = {k: v for k, v in filtered_problems.items() 
+                            if v.get("school_type") == filter_type}
+    
+    # 난이도 필터링
+    if filter_difficulty != "전체":
+        filtered_problems = {k: v for k, v in filtered_problems.items() 
+                            if v.get("difficulty") == filter_difficulty}
+    
+    # 표시할 컬럼 선택
+    show_columns = st.multiselect(
+        "표시할 컬럼:",
+        ["문제", "학교급", "학년", "주제", "난이도", "문제유형", "생성일"],
+        default=["문제", "학교급", "학년", "주제", "난이도"],
+        key="show_columns"
+    )
+    
+    # 문제 목록 데이터프레임 생성
+    if filtered_problems:
+        problem_data = []
+        for problem_id, problem in filtered_problems.items():
+            row = {
+                "ID": problem_id,
+                "문제": problem.get("question", "")[:50] + "..." if len(problem.get("question", "")) > 50 else problem.get("question", ""),
+                "학교급": problem.get("school_type", ""),
+                "학년": problem.get("grade", ""),
+                "주제": problem.get("topic", ""),
+                "난이도": problem.get("difficulty", ""),
+                "문제유형": problem.get("question_type", "객관식"),
+                "생성일": datetime.datetime.fromisoformat(problem.get("created_at", datetime.datetime.now().isoformat())).strftime("%Y-%m-%d") if "created_at" in problem else ""
+            }
+            problem_data.append(row)
+        
+        # 표시할 컬럼 필터링
+        columns_to_show = ["ID"] + show_columns
+        df = pd.DataFrame(problem_data)
+        
+        # 선택한 컬럼만 표시
+        if set(columns_to_show).issubset(df.columns):
+            df_display = df[columns_to_show]
+            st.dataframe(df_display, use_container_width=True)
+            
+            # 문제 상세 보기
+            selected_problem_id = st.selectbox(
+                "문제 상세 보기:",
+                options=list(filtered_problems.keys()),
+                format_func=lambda x: filtered_problems[x].get("question", "")[:50] + "..." if len(filtered_problems[x].get("question", "")) > 50 else filtered_problems[x].get("question", "")
+            )
+            
+            if selected_problem_id:
+                problem = filtered_problems[selected_problem_id]
+                
+                with st.expander("문제 상세 정보", expanded=True):
+                    # 문제 정보 표시
+                    st.markdown(f"### {problem.get('question', '문제 내용 없음')}")
+                    
+                    if 'context' in problem and problem['context']:
+                        st.markdown(f"**상황:** {problem['context']}")
+                    
+                    if 'options' in problem and problem['options']:
+                        st.markdown("**선택지:**")
+                        st.markdown(problem['options'])
+                    
+                    st.markdown(f"**정답:** {problem.get('answer', 'N/A')}")
+                    
+                    if 'explanation' in problem and problem['explanation']:
+                        st.markdown(f"**해설:** {problem['explanation']}")
+                    
+                    # 문제 메타데이터
+                    st.markdown("#### 문제 정보")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.write(f"**학교급:** {problem.get('school_type', '')}")
+                        st.write(f"**학년:** {problem.get('grade', '')}")
+                    with col2:
+                        st.write(f"**주제:** {problem.get('topic', '')}")
+                        st.write(f"**난이도:** {problem.get('difficulty', '')}")
+                    with col3:
+                        st.write(f"**문제유형:** {problem.get('question_type', '객관식')}")
+                        if 'created_at' in problem:
+                            try:
+                                created_at = datetime.datetime.fromisoformat(problem['created_at'])
+                                st.write(f"**생성일:** {created_at.strftime('%Y-%m-%d')}")
+                            except:
+                                st.write(f"**생성일:** {problem['created_at']}")
+                
+                # 문제 편집/삭제 버튼
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("문제 편집", key=f"edit_{selected_problem_id}"):
+                        st.session_state.editing_problem = selected_problem_id
+                        st.session_state.editing_problem_data = problem.copy()
+                
+                with col2:
+                    if st.button("문제 삭제", key=f"delete_{selected_problem_id}"):
+                        # 삭제 확인
+                        st.warning("이 문제를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")
+                        if st.button("삭제 확인", key=f"confirm_delete_{selected_problem_id}"):
+                            # 문제 삭제
+                            if selected_problem_id in st.session_state.teacher_problems:
+                                del st.session_state.teacher_problems[selected_problem_id]
+                                save_users_data()
+                                st.success("문제가 삭제되었습니다.")
+                                st.rerun()
+            
+            # 문제 편집 기능
+            if 'editing_problem' in st.session_state and 'editing_problem_data' in st.session_state:
+                with st.expander("문제 편집", expanded=True):
+                    # 문제 데이터
+                    problem_data = st.session_state.editing_problem_data
+                    
+                    # 문제 편집 폼
+                    st.subheader("문제 편집")
+                    
+                    # 기본 정보
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        school_type = st.selectbox(
+                            "학교급:",
+                            ["초등학교", "중학교", "고등학교"],
+                            index=["초등학교", "중학교", "고등학교"].index(problem_data.get("school_type", "중학교")) if problem_data.get("school_type") in ["초등학교", "중학교", "고등학교"] else 0
+                        )
+                        
+                        grade_options = {
+                            "초등학교": ["3학년", "4학년", "5학년", "6학년"],
+                            "중학교": ["1학년", "2학년", "3학년"],
+                            "고등학교": ["1학년", "2학년", "3학년"]
+                        }
+                        
+                        grade = st.selectbox(
+                            "학년:",
+                            grade_options[school_type],
+                            index=grade_options[school_type].index(problem_data.get("grade", grade_options[school_type][0])) if problem_data.get("grade") in grade_options[school_type] else 0
+                        )
+                    
+                    with col2:
+                        topic_options = {
+                            "초등학교": ["일상생활", "가족", "학교생활", "취미", "음식", "동물", "계절/날씨"],
+                            "중학교": ["자기소개", "학교생활", "취미/여가활동", "음식/건강", "쇼핑/의류", "여행/교통", "환경/자연", "문화/전통"],
+                            "고등학교": ["자기계발", "학업/진로", "사회문제", "과학/기술", "환경/지속가능성", "문화/예술", "국제관계", "미디어/광고"]
+                        }
+                        
+                        topic = st.selectbox(
+                            "주제:",
+                            topic_options[school_type],
+                            index=topic_options[school_type].index(problem_data.get("topic", topic_options[school_type][0])) if problem_data.get("topic") in topic_options[school_type] else 0
+                        )
+                        
+                        difficulty = st.selectbox(
+                            "난이도:",
+                            ["하", "중", "상"],
+                            index=["하", "중", "상"].index(problem_data.get("difficulty", "중")) if problem_data.get("difficulty") in ["하", "중", "상"] else 1
+                        )
+                    
+                    # 문제 내용
+                    question_type = st.selectbox(
+                        "문제 유형:",
+                        ["객관식", "주관식", "서술형"],
+                        index=["객관식", "주관식", "서술형"].index(problem_data.get("question_type", "객관식")) if problem_data.get("question_type") in ["객관식", "주관식", "서술형"] else 0
+                    )
+                    
+                    question = st.text_area("문제:", value=problem_data.get("question", ""), height=100)
+                    context = st.text_area("상황 설명:", value=problem_data.get("context", ""), height=50)
+                    
+                    if question_type == "객관식":
+                        options = st.text_area(
+                            "선택지 (각 선택지는 A. B. 형식으로 시작):",
+                            value=problem_data.get("options", ""),
+                            height=150
+                        )
+                    else:
+                        options = ""
+                    
+                    answer = st.text_area("정답:", value=problem_data.get("answer", ""), height=50)
+                    explanation = st.text_area("해설:", value=problem_data.get("explanation", ""), height=100)
+                    
+                    if st.button("변경사항 저장"):
+                        # 업데이트된 문제 데이터
+                        updated_problem = {
+                            "school_type": school_type,
+                            "grade": grade,
+                            "topic": topic,
+                            "difficulty": difficulty,
+                            "question_type": question_type,
+                            "question": question,
+                            "context": context,
+                            "options": options,
+                            "answer": answer,
+                            "explanation": explanation,
+                            "created_by": problem_data.get("created_by", teacher_username),
+                            "created_at": problem_data.get("created_at", datetime.datetime.now().isoformat()),
+                            "updated_at": datetime.datetime.now().isoformat()
+                        }
+                        
+                        # 문제 업데이트
+                        st.session_state.teacher_problems[st.session_state.editing_problem] = updated_problem
+                        save_users_data()
+                        
+                        # 편집 상태 초기화
+                        del st.session_state.editing_problem
+                        del st.session_state.editing_problem_data
+                        
+                        st.success("문제가 업데이트되었습니다.")
+                        st.rerun()
+                    
+                    if st.button("취소"):
+                        # 편집 상태 초기화
+                        del st.session_state.editing_problem
+                        del st.session_state.editing_problem_data
+                        st.rerun()
+    else:
+        st.info("검색 조건에 맞는 문제가 없습니다.")
+    
+def parse_problems(text):
+    """AI가 생성한 문제 텍스트를 파싱하여 구조화된 문제 목록으로 변환합니다."""
+    try:
+        # 결과를 저장할 리스트
+        problems = []
+        
+        # 문제 분리 패턴 (숫자로 시작하거나 '문제 1' 형태로 시작하는 줄)
+        problem_pattern = r'(?:^|\n)(?:\d+[\.\):]|문제\s*\d+[\.\):])'
+        
+        # 문제 텍스트 분리
+        problem_texts = re.split(problem_pattern, text)
+        
+        # 첫 번째 항목이 빈 문자열이거나 의미 없는 경우 제거
+        if problem_texts and (not problem_texts[0].strip() or len(problem_texts[0]) < 10):
+            problem_texts = problem_texts[1:]
+        
+        # 문제 번호 추출 (몇 번 문제인지 확인용)
+        problem_numbers = re.findall(problem_pattern, text)
+        
+        # 매칭된 문제 번호가 없으면 단일 문제로 처리
+        if not problem_numbers and text.strip():
+            problem_texts = [text]
+        
+        # 각 문제 텍스트 파싱
+        for i, problem_text in enumerate(problem_texts):
+            if not problem_text.strip():
+                continue
+            
+            problem = {}
+            
+            # 문제 본문 추출
+            lines = problem_text.strip().split('\n')
+            
+            # 질문과 내용 분리
+            question_text = lines[0].strip() if lines else ""
+            
+            # 질문이 너무 짧으면 여러 줄 합치기
+            if len(question_text) < 10 and len(lines) > 1:
+                question_text = " ".join([line.strip() for line in lines[:2]])
+            
+            problem["question"] = question_text
+            
+            # 문제 내용 전체
+            problem["content"] = problem_text
+            
+            # 선택지 추출 (객관식 문제인 경우)
+            options_pattern = r'(?:^|\n)(?:[A-D][\.\)])'
+            if re.search(options_pattern, problem_text):
+                problem["question_type"] = "객관식"
+                
+                # 선택지 텍스트 추출
+                options_text = re.findall(r'(?:[A-D][\.\)].*(?:\n|$))+', problem_text)
+                if options_text:
+                    problem["options"] = "\n".join(options_text)
+            else:
+                # 선택지가 없으면 주관식 또는 서술형으로 판단
+                # 일단 주관식으로 기본 설정하고, 나중에 문제 내용에 따라 서술형으로 변경 가능
+                problem["question_type"] = "주관식"
+                problem["options"] = ""
+            
+            # 정답 추출 (Answer, 정답, 답 등으로 시작하는 줄)
+            answer_pattern = r'(?:^|\n)(?:Answer|정답|답)[\s\:]+(.+?)(?:\n|$)'
+            answer_match = re.search(answer_pattern, problem_text, re.IGNORECASE)
+            
+            if answer_match:
+                problem["answer"] = answer_match.group(1).strip()
+            else:
+                # 정답 패턴이 없으면 텍스트에서 가능한 정답 추출 시도
+                for line in lines:
+                    if '정답' in line or 'answer' in line.lower() or '답:' in line or '답은' in line:
+                        # 콜론이나 '은/는' 이후의 텍스트를 정답으로 추출
+                        if ':' in line:
+                            problem["answer"] = line.split(':', 1)[1].strip()
+                        elif '는' in line:
+                            problem["answer"] = line.split('는', 1)[1].strip()
+                        elif '은' in line:
+                            problem["answer"] = line.split('은', 1)[1].strip()
+                        else:
+                            problem["answer"] = line.replace('정답', '').replace('Answer', '').replace('답', '').strip()
+                        break
+                
+                # 여전히 정답이 없으면 빈 문자열 설정
+                if "answer" not in problem:
+                    problem["answer"] = ""
+            
+            # 해설 추출 (Explanation, 해설 등으로 시작하는 줄)
+            explanation_pattern = r'(?:^|\n)(?:Explanation|해설|설명)[\s\:]+(.+(?:\n.+)*)'
+            explanation_match = re.search(explanation_pattern, problem_text, re.IGNORECASE)
+            
+            if explanation_match:
+                problem["explanation"] = explanation_match.group(1).strip()
+            else:
+                # 다른 패턴 시도
+                for line_idx, line in enumerate(lines):
+                    if '해설' in line or 'explanation' in line.lower() or '설명' in line:
+                        if line_idx < len(lines) - 1:
+                            problem["explanation"] = "\n".join(lines[line_idx+1:])
+                            break
+                
+                # 해설이 없으면 빈 문자열 설정
+                if "explanation" not in problem:
+                    problem["explanation"] = ""
+            
+            # 서술형 판단 (주관식이면서 정답이 긴 경우)
+            if problem["question_type"] == "주관식" and len(problem.get("answer", "")) > 30:
+                problem["question_type"] = "서술형"
+            
+            problems.append(problem)
+        
+        return problems
+    
+    except Exception as e:
+        st.error(f"문제 파싱 중 오류가 발생했습니다: {str(e)}")
+        return []
+    
