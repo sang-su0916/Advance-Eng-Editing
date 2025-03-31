@@ -19,8 +19,8 @@ load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="AI 영어 첨삭 앱",
-    page_icon="✏️",
+    page_title="학원자동시스템관리",
+    page_icon="🏫",
     layout="wide"
 )
 
@@ -161,7 +161,9 @@ def register_user(username, password, role, name, email, created_by=None):
 
 # Login page
 def login_page():
-    st.title("AI 영어 첨삭 앱 - 로그인")
+    st.title("학원자동시스템관리 - 로그인")
+    
+    show_role_info()  # 역할별 안내 표시 (기본적으로 접혀있음)
     
     # 로그인 폼
     username = st.text_input("아이디", key="login_username")
@@ -229,20 +231,34 @@ def student_solve_problems():
     # 문제 옵션
     problem_option = st.radio(
         "문제를 선택하세요:",
-        ["예제 문제", "교사 출제 문제"],
+        ["교사 출제 문제"],
         horizontal=True
     )
     
-    # 문제가 변경되었을 때 첨삭 결과 초기화하는 함수
-    def reset_feedback_if_problem_changed(new_problem_key):
-        if st.session_state.last_problem_key != new_problem_key:
-            st.session_state.user_answer = ""
-            st.session_state.feedback = None
-            st.session_state.last_problem_key = new_problem_key
-            return True
-        return False
+    if problem_option == "교사 출제 문제":
+        # 카테고리 선택
+        categories = list(set(p.get("category", "기타") for p in st.session_state.teacher_problems.values()))
+        if categories:
+            selected_category = st.selectbox("카테고리 선택:", categories)
+            
+            # 선택된 카테고리의 문제 목록
+            category_problems = {k: v for k, v in st.session_state.teacher_problems.items() 
+                               if v.get("category") == selected_category}
+            
+            if category_problems:
+                problem_key = st.selectbox(
+                    "문제 선택:",
+                    list(category_problems.keys()),
+                    format_func=lambda x: f"{x} ({category_problems[x].get('level', '난이도 미지정')})"
+                )
+                
+                if problem_key:
+                    display_and_solve_problem(problem_key, category_problems[problem_key])
+            else:
+                st.info("선택한 카테고리에 문제가 없습니다.")
     
-    if problem_option == "예제 문제":
+    # 예제 문제 탭
+    elif problem_option == "예제 문제":
         # 카테고리별로 정렬
         categories = {}
         for key, problem in SAMPLE_PROBLEMS.items():
@@ -277,50 +293,6 @@ def student_solve_problems():
                 problem_changed = reset_feedback_if_problem_changed(problem_key)
                 
                 st.session_state.current_problem = SAMPLE_PROBLEMS[problem_key]
-    
-    elif problem_option == "교사 출제 문제":
-        # 교사가 출제한 문제 목록
-        teacher_problems = st.session_state.teacher_problems
-        
-        if not teacher_problems:
-            st.info("아직 교사가 출제한 문제가 없습니다.")
-        else:
-            # 카테고리별로 정렬
-            categories = {}
-            for key, problem in teacher_problems.items():
-                category = problem.get("category", "기타")
-                if category not in categories:
-                    categories[category] = []
-                categories[category].append(key)
-            
-            # 카테고리 선택
-            selected_category = st.selectbox(
-                "카테고리를 선택하세요:",
-                list(categories.keys()),
-                key="teacher_category"
-            )
-            
-            # 선택된 카테고리의 문제 목록
-            if selected_category:
-                # 문제 이름만 보여주기 위해 키에서 카테고리 부분 제거
-                display_names = {}
-                for key in categories[selected_category]:
-                    display_name = key.split('/')[-1] if '/' in key else key
-                    display_names[display_name] = key
-                    
-                problem_display = st.selectbox(
-                    "문제를 선택하세요:",
-                    list(display_names.keys()),
-                    key="teacher_problem"
-                )
-                
-                if problem_display:
-                    problem_key = display_names[problem_display]
-                    
-                    # 문제가 변경되었는지 확인하고 필요시 초기화
-                    problem_changed = reset_feedback_if_problem_changed(problem_key)
-                    
-                    st.session_state.current_problem = teacher_problems[problem_key]
     
     elif problem_option == "AI 생성 문제":
         if not st.session_state.openai_api_key and not st.session_state.gemini_api_key:
@@ -752,6 +724,52 @@ def teacher_dashboard():
         logout_user()
         st.rerun()
 
+def check_api_key():
+    """API 키 유효성을 확인하는 함수"""
+    has_openai = bool(st.session_state.openai_api_key.strip())
+    has_gemini = bool(st.session_state.gemini_api_key.strip())
+    return has_openai or has_gemini
+
+def generate_ai_problems(topic, level, num_problems, api_model):
+    """AI를 사용하여 문제를 생성하는 함수"""
+    try:
+        if api_model == "OpenAI GPT" and st.session_state.openai_api_key:
+            # OpenAI API를 사용하여 문제 생성
+            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an expert English teacher creating practice problems."},
+                    {"role": "user", "content": f"""
+                    Create {num_problems} English practice problems on the topic of {topic} at {level} level.
+                    The ratio should be: 80% multiple choice, 20% open-ended questions.
+                    Return in JSON format with fields: name, type, question, context, options (for MC), correct_answer, example (for open-ended).
+                    """}
+                ],
+                temperature=0.7
+            )
+            return json.loads(response.choices[0].message.content)
+        
+        elif api_model == "Gemini" and st.session_state.gemini_api_key:
+            # Gemini API를 사용하여 문제 생성
+            import google.generativeai as genai
+            genai.configure(api_key=st.session_state.gemini_api_key)
+            model = genai.GenerativeModel('gemini-pro')
+            prompt = f"""
+            Create {num_problems} English practice problems on the topic of {topic} at {level} level.
+            The ratio should be: 80% multiple choice, 20% open-ended questions.
+            Return in JSON format with fields: name, type, question, context, options (for MC), correct_answer, example (for open-ended).
+            """
+            response = model.generate_content(prompt)
+            return json.loads(response.text)
+        
+        else:
+            raise ValueError("선택한 AI 모델의 API 키가 설정되지 않았습니다.")
+    
+    except Exception as e:
+        st.error(f"문제 생성 중 오류가 발생했습니다: {str(e)}")
+        return None
+
 def teacher_problem_management():
     st.header("문제 관리")
     
@@ -970,135 +988,58 @@ def teacher_problem_management():
     with tab4:
         st.subheader("AI로 문제 생성하기")
         
-        if not st.session_state.openai_api_key and not st.session_state.gemini_api_key:
-            st.error("API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
+        if not check_api_key():
+            st.error("OpenAI 또는 Gemini API 키가 설정되지 않았습니다. 관리자 페이지에서 설정해주세요.")
         else:
-            # 문제 생성을 위한 카테고리 선택
-            ai_topic_options = [
-                "일상생활/자기소개", "학교생활/교육", "취미/여가활동", "여행/문화체험", 
-                "환경/사회문제", "과학/기술", "직업/진로", "건강/운동", 
-                "음식/요리", "예술/엔터테인먼트", "경제/비즈니스", "시사/뉴스",
-                "가족/인간관계", "감정/심리", "자연/동물", "기타"
-            ]
+            # AI 문제 생성 인터페이스
+            ai_topic = st.selectbox("주제 선택:", [
+                "일상생활/자기소개", "학교생활/교육", "취미/여가활동", "여행/문화체험",
+                "환경/사회문제", "과학/기술", "직업/진로", "건강/운동",
+                "음식/요리", "예술/엔터테인먼트", "경제/비즈니스", "시사/뉴스"
+            ])
             
-            ai_topic = st.selectbox("AI가 문제를 생성할 주제를 선택하세요:", ai_topic_options, key="ai_topic")
+            ai_level = st.selectbox("난이도:", [
+                "초급(초)", "초급(중)", "초급(상)", 
+                "중급(초)", "중급(중)", "중급(상)",
+                "상급(초)", "상급(중)", "상급(상)"
+            ])
             
-            # 난이도 선택
-            level_options = ["초급(초)", "초급(중)", "초급(상)", "중급(초)", "중급(중)", "중급(상)", "상급(초)", "상급(중)", "상급(상)"]
-            ai_level = st.selectbox("난이도:", level_options, key="ai_level")
-            
-            # 문제 수 선택
             num_problems = st.slider("생성할 문제 수:", 1, 10, 5)
             
-            # API 모델 선택
-            api_model = st.radio("사용할 AI 모델:", ["OpenAI GPT", "Gemini"], horizontal=True, key="ai_model")
+            # 사용 가능한 API 모델 목록 생성
+            available_models = []
+            if st.session_state.openai_api_key:
+                available_models.append("OpenAI GPT")
+            if st.session_state.gemini_api_key:
+                available_models.append("Gemini")
             
-            # 문제 이름 접두사
-            name_prefix = st.text_input("문제 이름 접두사 (선택사항):", key="name_prefix")
+            api_model = st.radio("사용할 AI 모델:", available_models, horizontal=True)
             
-            if st.button("AI 문제 생성하기", key="ai_generate"):
-                with st.spinner(f"AI가 {num_problems}개의 문제를 생성 중입니다..."):
-                    try:
-                        if api_model == "OpenAI GPT" and st.session_state.openai_api_key:
-                            # OpenAI API를 사용하여 문제 생성
-                            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
-                            response = client.chat.completions.create(
-                                model="gpt-3.5-turbo",
-                                messages=[
-                                    {"role": "system", "content": "You are an expert English teacher creating practice problems for Korean students."},
-                                    {"role": "user", "content": f"""
-                                    Create {num_problems} English practice problems on the topic of {ai_topic} at {ai_level} level for Korean students.
-                                    
-                                    The ratio should be:
-                                    - 80% multiple choice questions (with 4 options and correct answer)
-                                    - 20% open-ended questions (with example answer)
-                                    
-                                    Return the problems in JSON format as an array of objects with the following fields:
-                                    - name: A short descriptive name for the problem (in Korean)
-                                    - type: "multiple_choice" or "open_ended"
-                                    - question: The question or prompt
-                                    - context: Brief context or background
-                                    For multiple choice questions also include:
-                                    - options: Array of 4 options
-                                    - correct_answer: The correct option number (1-4)
-                                    For open-ended questions also include:
-                                    - example: A sample answer
-                                    
-                                    Make sure the difficulty is appropriate for a {ai_level} level Korean student learning English.
-                                    """}
-                                ],
-                                temperature=0.7,
-                            )
-                            
-                            # Parse the response
-                            ai_problem_text = response.choices[0].message.content
-                        
-                        elif api_model == "Gemini" and st.session_state.gemini_api_key:
-                            # 여기에 Gemini API 호출 구현
-                            st.warning("이 데모에서는 Gemini API가 아직 구현되지 않았습니다. 관리자 페이지에서 API 키를 설정할 수 있습니다.")
-                            return
-                        else:
-                            st.error(f"선택한 모델({api_model})의 API 키가 설정되지 않았습니다.")
-                            return
-                        
-                        # Extract JSON from the response
-                        import json
-                        import re
-                        
-                        # Try to extract JSON using regex
-                        json_match = re.search(r'```json\n(.*?)\n```', ai_problem_text, re.DOTALL)
-                        if json_match:
-                            ai_problems_json = json.loads(json_match.group(1))
-                        else:
-                            # If not in code block, try direct parsing
-                            ai_problems_json = json.loads(ai_problem_text)
-                        
-                        # Ensure we have a list of problems
-                        if not isinstance(ai_problems_json, list):
-                            ai_problems_json = [ai_problems_json]
-                        
-                        # 문제 저장
-                        imported_count = 0
-                        
-                        for i, problem_json in enumerate(ai_problems_json):
-                            try:
-                                # Problem name with optional prefix
-                                name = problem_json.get("name", f"AI문제{i+1}")
-                                if name_prefix:
-                                    name = f"{name_prefix}-{name}"
-                                
-                                problem_key = f"{ai_topic}/{name}"
-                                
-                                # 중복 확인 및 키 수정
-                                original_key = problem_key
-                                counter = 1
-                                while problem_key in st.session_state.teacher_problems:
-                                    problem_key = f"{original_key}-{counter}"
-                                    counter += 1
-                                
-                                # 문제 저장
-                                st.session_state.teacher_problems[problem_key] = {
-                                    "category": ai_topic,
-                                    "question": problem_json.get("question", ""),
-                                    "context": problem_json.get("context", ""),
-                                    "example": problem_json.get("example", ""),
-                                    "level": ai_level,
-                                    "created_by": st.session_state.username,
-                                    "created_at": datetime.datetime.now().isoformat(),
-                                    "generated_by": api_model
-                                }
-                                
-                                imported_count += 1
-                            
-                            except Exception as e:
-                                st.error(f"문제 {i+1} 처리 중 오류가 발생했습니다: {e}")
+            if st.button("AI 문제 생성하기"):
+                with st.spinner("AI가 문제를 생성하고 있습니다..."):
+                    problems = generate_ai_problems(ai_topic, ai_level, num_problems, api_model)
+                    if problems:
+                        for p in problems:
+                            problem_key = f"{ai_topic}/{p['name']}"
+                            st.session_state.teacher_problems[problem_key] = {
+                                "category": ai_topic,
+                                "question": p["question"],
+                                "context": p["context"],
+                                "type": p["type"],
+                                "level": ai_level,
+                                "created_by": st.session_state.username,
+                                "created_at": datetime.datetime.now().isoformat()
+                            }
+                            if p["type"] == "multiple_choice":
+                                st.session_state.teacher_problems[problem_key].update({
+                                    "options": p["options"],
+                                    "correct_answer": p["correct_answer"]
+                                })
+                            else:
+                                st.session_state.teacher_problems[problem_key]["example"] = p["example"]
                         
                         save_users_data()
-                        st.success(f"{imported_count}개의 문제가 성공적으로 생성되어 저장되었습니다.")
-                    
-                    except Exception as e:
-                        st.error(f"문제 생성 중 오류가 발생했습니다: {e}")
-                        st.info("API 응답 형식이 잘못되었거나 네트워크 오류가 발생했습니다. 다시 시도해주세요.")
+                        st.success(f"{len(problems)}개의 문제가 생성되어 저장되었습니다.")
 
 def teacher_student_management():
     st.header("학생 관리")
