@@ -16,20 +16,10 @@ from prompts import get_correction_prompt
 
 # 전역 변수로 Gemini 모듈 사용 가능 여부 저장
 GEMINI_AVAILABLE = False
+genai = None  # 초기값 None으로 설정
 
 # Load environment variables first
 load_dotenv()
-
-# Initialize API configurations
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-    if 'gemini_api_key' in st.session_state and st.session_state.gemini_api_key:
-        genai.configure(api_key=st.session_state.gemini_api_key)
-except ImportError:
-    st.error("Gemini API 모듈을 찾을 수 없습니다. 'pip install google-generativeai' 명령어로 설치해주세요.")
-except Exception as e:
-    st.error(f"Gemini API 초기화 중 오류가 발생했습니다: {str(e)}")
 
 # Initialize session state
 if 'openai_api_key' not in st.session_state:
@@ -43,6 +33,25 @@ st.set_page_config(
     page_icon="🏫",
     layout="wide"
 )
+
+# 나중에 필요할 때만 Gemini 모듈 임포트 시도
+def load_gemini_module():
+    global GEMINI_AVAILABLE, genai
+    if not GEMINI_AVAILABLE:
+        try:
+            import google.generativeai as genai_module
+            genai = genai_module
+            GEMINI_AVAILABLE = True
+            if st.session_state.gemini_api_key:
+                genai.configure(api_key=st.session_state.gemini_api_key)
+            return True
+        except ImportError:
+            # st.warning("Gemini API 모듈을 찾을 수 없습니다. OpenAI API만 사용 가능합니다.")
+            return False
+        except Exception as e:
+            # st.warning(f"Gemini API 초기화 중 오류가 발생했습니다: {str(e)}")
+            return False
+    return GEMINI_AVAILABLE
 
 # Function to initialize session states
 def initialize_session_states():
@@ -208,7 +217,7 @@ def generate_feedback(problem, user_answer):
                 st.error(f"OpenAI API 오류: {str(e)}")
         
         # Gemini 시도
-        if st.session_state.gemini_api_key and GEMINI_AVAILABLE:
+        if st.session_state.gemini_api_key and load_gemini_module():
             prompt = get_correction_prompt(problem, user_answer)
             
             try:
@@ -220,7 +229,7 @@ def generate_feedback(problem, user_answer):
                 st.error(f"Gemini API 오류: {str(e)}")
         
         # 둘 다 실패한 경우
-        if not st.session_state.openai_api_key and (not st.session_state.gemini_api_key or not GEMINI_AVAILABLE):
+        if not st.session_state.openai_api_key and (not st.session_state.gemini_api_key or not load_gemini_module()):
             st.error("API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
             return None
         
@@ -500,7 +509,7 @@ def teacher_dashboard():
 def check_api_key():
     """API 키 유효성을 확인하는 함수"""
     has_openai = bool(st.session_state.openai_api_key.strip())
-    has_gemini = bool(st.session_state.gemini_api_key.strip()) and GEMINI_AVAILABLE
+    has_gemini = bool(st.session_state.gemini_api_key.strip()) and load_gemini_module()
     return has_openai or has_gemini
 
 def generate_ai_problems(topic, level, num_problems, api_model):
@@ -523,7 +532,7 @@ def generate_ai_problems(topic, level, num_problems, api_model):
             )
             return json.loads(response.choices[0].message.content)
         
-        elif api_model == "Gemini" and st.session_state.gemini_api_key and GEMINI_AVAILABLE:
+        elif api_model == "Gemini" and st.session_state.gemini_api_key and load_gemini_module():
             # Gemini API를 사용하여 문제 생성
             try:
                 genai.configure(api_key=st.session_state.gemini_api_key)
@@ -535,18 +544,15 @@ def generate_ai_problems(topic, level, num_problems, api_model):
                 """
                 response = model.generate_content(prompt)
                 return json.loads(response.text)
-            except NameError:
-                st.error("Gemini API 모듈이 올바르게 로드되지 않았습니다. 'pip install google-generativeai' 명령어로 설치해주세요.")
+            except Exception as e:
+                st.error(f"Gemini API 오류: {str(e)}")
                 return None
         
         else:
             raise ValueError("선택한 AI 모델의 API 키가 설정되지 않았습니다.")
     
     except Exception as e:
-        if "google.generativeai" in str(e):
-            st.error("Gemini API 모듈을 설치해주세요: pip install google-generativeai")
-        else:
-            st.error(f"문제 생성 중 오류가 발생했습니다: {str(e)}")
+        st.error(f"문제 생성 중 오류가 발생했습니다: {str(e)}")
         return None
 
 def teacher_problem_management():
@@ -789,7 +795,7 @@ def teacher_problem_management():
             available_models = []
             if st.session_state.openai_api_key:
                 available_models.append("OpenAI GPT")
-            if st.session_state.gemini_api_key and GEMINI_AVAILABLE:
+            if st.session_state.gemini_api_key and load_gemini_module():
                 available_models.append("Gemini")
             
             if not available_models:
@@ -1311,7 +1317,7 @@ def admin_api_settings():
                 f.write(f"GEMINI_API_KEY={gemini_api_key.strip()}\n")
             st.success("Gemini API 키가 저장되었습니다.")
             # Gemini API 초기화
-            if gemini_api_key.strip() and GEMINI_AVAILABLE:
+            if gemini_api_key.strip() and load_gemini_module():
                 genai.configure(api_key=gemini_api_key.strip())
         except Exception as e:
             st.error(f"API 키 저장 중 오류가 발생했습니다: {e}")
@@ -1350,11 +1356,12 @@ def admin_api_settings():
         elif test_option == "Gemini":
             if not st.session_state.gemini_api_key:
                 st.error("Gemini API 키가 설정되지 않았습니다.")
-            elif not GEMINI_AVAILABLE:
-                st.error("Gemini API 모듈이 설치되지 않았습니다. 'pip install google-generativeai' 명령어로 설치해주세요.")
+            elif not load_gemini_module():
+                st.error("Gemini API 모듈을 불러올 수 없습니다. 패키지가 설치되어 있는지 확인하세요.")
             else:
                 try:
                     with st.spinner("Gemini API 연결 테스트 중..."):
+                        genai.configure(api_key=st.session_state.gemini_api_key)
                         model = genai.GenerativeModel('gemini-pro')
                         response = model.generate_content("Hello, can you hear me? Please respond with 'Yes, I can hear you clearly.'")
                         if "I can hear you" in response.text:
@@ -1733,59 +1740,6 @@ def admin_backup_restore():
                 except Exception as e:
                     st.error(f"ZIP 파일 처리 중 오류가 발생했습니다: {e}")
 
-def display_and_solve_problem(problem_key, problem_data):
-    st.subheader("문제")
-    st.write(problem_data["question"])
-    
-    st.subheader("문제 맥락")
-    st.write(problem_data["context"])
-    
-    # 사용자 답변 입력
-    user_answer = st.text_area("답변 작성하기:", height=200)
-    
-    # 제출 버튼
-    if st.button("답변 제출하기"):
-        if not user_answer.strip():
-            st.error("답변을 입력해주세요.")
-            return
-        
-        # 피드백 생성
-        with st.spinner("AI 첨삭을 생성하고 있습니다..."):
-            feedback = generate_feedback(problem_data, user_answer)
-            
-            if feedback:
-                # 답변 및 피드백 저장
-                username = st.session_state.username
-                if username not in st.session_state.student_records:
-                    st.session_state.student_records[username] = {
-                        "solved_problems": [],
-                        "total_problems": 0,
-                        "feedback_history": []
-                    }
-                
-                # 새로운 학습 기록 추가
-                st.session_state.student_records[username]["solved_problems"].append({
-                    "problem": problem_data,
-                    "answer": user_answer,
-                    "feedback": feedback,
-                    "timestamp": datetime.datetime.now().isoformat()
-                })
-                
-                # 총 문제 수 증가
-                st.session_state.student_records[username]["total_problems"] += 1
-                
-                # 데이터 저장
-                save_users_data()
-                
-                # 결과 표시
-                st.success("답변이 제출되었습니다. AI 첨삭을 확인하세요.")
-                
-                # 첨삭 표시
-                st.subheader("AI 첨삭 결과")
-                st.markdown(feedback)
-            else:
-                st.error("첨삭 생성에 실패했습니다. 다시 시도해주세요.")
-
 def admin_system_info():
     st.header("시스템 정보")
     
@@ -1931,6 +1885,59 @@ def admin_system_info():
             st.write(f"**{activity['timestamp'].strftime('%Y-%m-%d %H:%M')}** - {activity['activity']}")
     else:
         st.info("최근 활동 기록이 없습니다.")
+
+def display_and_solve_problem(problem_key, problem_data):
+    st.subheader("문제")
+    st.write(problem_data["question"])
+    
+    st.subheader("문제 맥락")
+    st.write(problem_data["context"])
+    
+    # 사용자 답변 입력
+    user_answer = st.text_area("답변 작성하기:", height=200)
+    
+    # 제출 버튼
+    if st.button("답변 제출하기"):
+        if not user_answer.strip():
+            st.error("답변을 입력해주세요.")
+            return
+        
+        # 피드백 생성
+        with st.spinner("AI 첨삭을 생성하고 있습니다..."):
+            feedback = generate_feedback(problem_data, user_answer)
+            
+            if feedback:
+                # 답변 및 피드백 저장
+                username = st.session_state.username
+                if username not in st.session_state.student_records:
+                    st.session_state.student_records[username] = {
+                        "solved_problems": [],
+                        "total_problems": 0,
+                        "feedback_history": []
+                    }
+                
+                # 새로운 학습 기록 추가
+                st.session_state.student_records[username]["solved_problems"].append({
+                    "problem": problem_data,
+                    "answer": user_answer,
+                    "feedback": feedback,
+                    "timestamp": datetime.datetime.now().isoformat()
+                })
+                
+                # 총 문제 수 증가
+                st.session_state.student_records[username]["total_problems"] += 1
+                
+                # 데이터 저장
+                save_users_data()
+                
+                # 결과 표시
+                st.success("답변이 제출되었습니다. AI 첨삭을 확인하세요.")
+                
+                # 첨삭 표시
+                st.subheader("AI 첨삭 결과")
+                st.markdown(feedback)
+            else:
+                st.error("첨삭 생성에 실패했습니다. 다시 시도해주세요.")
 
 # Main app function
 def main():
