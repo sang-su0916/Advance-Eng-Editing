@@ -42,6 +42,7 @@ st.set_page_config(
 
 # Function to initialize session states
 def initialize_session_states():
+    """세션 상태 초기화"""
     if 'current_problem' not in st.session_state:
         st.session_state.current_problem = None
     if 'user_answer' not in st.session_state:
@@ -70,6 +71,13 @@ def initialize_session_states():
         st.session_state.teacher_problems = {}
     if 'student_records' not in st.session_state:
         st.session_state.student_records = {}
+    
+    # API 키 초기화 - .env 파일에서 로드
+    load_dotenv()
+    if 'openai_api_key' not in st.session_state:
+        st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+    if 'gemini_api_key' not in st.session_state:
+        st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
 # Initialize session state
 initialize_session_states()
@@ -118,6 +126,12 @@ def login_user(username, password):
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.session_state.user_role = st.session_state.users[username]["role"]
+                
+                # API 키 다시 로드
+                load_dotenv()
+                st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+                st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+                
                 return True
             else:
                 st.error("비밀번호가 일치하지 않습니다.")
@@ -130,9 +144,18 @@ def login_user(username, password):
 
 def logout_user():
     """사용자 로그아웃 처리"""
+    # API 키는 유지하지 않음
+    st.session_state.clear()
+    
+    # 기본 상태 설정
     st.session_state.logged_in = False
     st.session_state.username = None
     st.session_state.user_role = None
+    
+    # API 키 재로드
+    load_dotenv()
+    st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+    st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
 def register_user(username, password, role, name, email, created_by=None):
     """새 사용자 등록"""
@@ -1328,6 +1351,30 @@ def admin_api_settings():
     
     st.info("이 페이지에서 OpenAI 및 Google Gemini API 키를 설정할 수 있습니다. API 키는 암호화되지 않고 저장되므로 주의하세요.")
     
+    # API 키 유지/리셋 옵션
+    st.subheader("API 키 관리 옵션")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("API 키 유지하기"):
+            st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+            st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+            st.success("API 키가 환경 변수에서 다시 로드되었습니다.")
+    
+    with col2:
+        if st.button("API 키 초기화"):
+            st.session_state.openai_api_key = ""
+            st.session_state.gemini_api_key = ""
+            try:
+                with open(".env", "w") as f:
+                    f.write("OPENAI_API_KEY=\n")
+                    f.write("GEMINI_API_KEY=\n")
+                st.success("API 키가 초기화되었습니다.")
+            except Exception as e:
+                st.error(f"API 키 초기화 중 오류가 발생했습니다: {e}")
+    
+    st.markdown("---")
+    
     # OpenAI API 키 설정
     st.subheader("OpenAI API 키")
     openai_api_key = st.text_input(
@@ -1587,12 +1634,18 @@ def admin_backup_restore():
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 
                 if backup_format == "JSON":
-                    # JSON 백업
+                    # JSON 백업 - API 키 제외
                     users_data = {
                         "users": st.session_state.users,
                         "teacher_problems": st.session_state.teacher_problems,
                         "student_records": st.session_state.student_records
                     }
+                    # API 키 관련 데이터 제거
+                    if 'openai_api_key' in users_data:
+                        del users_data['openai_api_key']
+                    if 'gemini_api_key' in users_data:
+                        del users_data['gemini_api_key']
+                    
                     json_str = json.dumps(users_data, ensure_ascii=False, indent=4)
                     
                     st.download_button(
@@ -1604,7 +1657,7 @@ def admin_backup_restore():
                 
                 else:
                     # CSV 백업
-                    # 사용자 데이터
+                    # 사용자 데이터 (API 키 제외)
                     users_df = pd.DataFrame([
                         {
                             "username": username,
