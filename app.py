@@ -253,28 +253,307 @@ def student_dashboard():
 def student_solve_problems():
     st.header("문제 풀기")
     
-    # 카테고리 선택
-    categories = list(set(p.get("category", "기타") for p in st.session_state.teacher_problems.values()))
-    if categories:
-        selected_category = st.selectbox("카테고리 선택:", categories)
+    # 문제 풀기 옵션
+    options_tab, random_tab = st.tabs(["문제 선택", "랜덤 문제 풀이"])
+    
+    with options_tab:
+        # 기존 문제 목록에서 선택하는 방식
+        # 카테고리 선택
+        categories = list(set(p.get("category", "기타") for p in st.session_state.teacher_problems.values()))
+        
+        if not categories:
+            st.info("아직 등록된 문제가 없습니다. 선생님께 문의해주세요.")
+            return
+            
+        selected_category = st.selectbox("카테고리 선택:", categories, key="category_select")
         
         # 선택된 카테고리의 문제 목록
         category_problems = {k: v for k, v in st.session_state.teacher_problems.items() 
                            if v.get("category") == selected_category}
         
-        if category_problems:
-            problem_key = st.selectbox(
-                "문제 선택:",
-                list(category_problems.keys()),
-                format_func=lambda x: f"{x} ({category_problems[x].get('level', '난이도 미지정')})"
+        if not category_problems:
+            st.info("선택한 카테고리에 문제가 없습니다.")
+            return
+            
+        # 문제 수와 시간 설정
+        col1, col2 = st.columns(2)
+        with col1:
+            num_problems = st.selectbox("풀 문제 수:", [5, 10, 15, 20], index=1)
+        with col2:
+            time_limit = st.selectbox("제한 시간 (분):", [10, 20, 30, 40, 60], index=1)
+        
+        # 선택된 카테고리에서 문제 목록 가져오기
+        problem_keys = list(category_problems.keys())
+        if len(problem_keys) > num_problems:
+            problem_keys = problem_keys[:num_problems]
+        
+        st.write(f"**{selected_category}** 카테고리에서 **{len(problem_keys)}개** 문제를 선택했습니다.")
+        
+        if st.button("문제 풀기 시작", key="start_selected_problems"):
+            # 세션 상태에 선택된 문제와 시간 제한 저장
+            st.session_state.selected_problems = [(key, category_problems[key]) for key in problem_keys]
+            st.session_state.time_limit_minutes = time_limit
+            st.session_state.current_problem_index = 0
+            st.session_state.start_time = datetime.datetime.now()
+            st.session_state.answers = []
+            st.session_state.solving_mode = True
+            st.rerun()
+    
+    with random_tab:
+        # 랜덤으로 문제를 선택하는 방식
+        st.write("랜덤으로 문제를 선택합니다.")
+        
+        # 난이도 선택
+        difficulty_levels = list(set(p.get("level", "미지정") for p in st.session_state.teacher_problems.values()))
+        selected_difficulty = st.multiselect("난이도 선택:", difficulty_levels, default=difficulty_levels)
+        
+        # 문제 수와 시간 설정
+        col1, col2 = st.columns(2)
+        with col1:
+            num_random_problems = st.selectbox("풀 문제 수:", [5, 10, 15, 20], index=1, key="random_num")
+        with col2:
+            random_time_limit = st.selectbox("제한 시간 (분):", [10, 20, 30, 40, 60], index=1, key="random_time")
+        
+        # 선택된 난이도에 맞는 문제 필터링
+        filtered_problems = {k: v for k, v in st.session_state.teacher_problems.items() 
+                           if v.get("level", "미지정") in selected_difficulty}
+        
+        if not filtered_problems:
+            st.info("선택한 난이도에 맞는 문제가 없습니다.")
+        else:
+            st.write(f"선택한 난이도에 **{len(filtered_problems)}개** 문제가 있습니다.")
+            if st.button("랜덤 문제 풀기 시작", key="start_random_problems"):
+                import random
+                # 랜덤으로 문제 선택
+                problem_items = list(filtered_problems.items())
+                if len(problem_items) > num_random_problems:
+                    selected_items = random.sample(problem_items, num_random_problems)
+                else:
+                    selected_items = problem_items
+                
+                # 세션 상태에 선택된 문제와 시간 제한 저장
+                st.session_state.selected_problems = selected_items
+                st.session_state.time_limit_minutes = random_time_limit
+                st.session_state.current_problem_index = 0
+                st.session_state.start_time = datetime.datetime.now()
+                st.session_state.answers = []
+                st.session_state.solving_mode = True
+                st.rerun()
+    
+    # 문제 풀이 모드인 경우 문제 표시
+    if st.session_state.get('solving_mode', False):
+        solve_problem_sequence()
+
+def solve_problem_sequence():
+    """선택된 문제 시퀀스를 풀이하는 함수"""
+    # 현재 시간 계산
+    current_time = datetime.datetime.now()
+    elapsed_seconds = (current_time - st.session_state.start_time).total_seconds()
+    remaining_seconds = (st.session_state.time_limit_minutes * 60) - elapsed_seconds
+    
+    if remaining_seconds <= 0:
+        # 시간 초과
+        st.error("시간이 초과되었습니다. 지금까지 작성한 답변이 제출됩니다.")
+        submit_all_answers()
+        return
+    
+    # 남은 시간 표시
+    minutes = int(remaining_seconds // 60)
+    seconds = int(remaining_seconds % 60)
+    st.info(f"남은 시간: {minutes}분 {seconds}초")
+    
+    # 진행 상황 표시
+    total_problems = len(st.session_state.selected_problems)
+    current_index = st.session_state.current_problem_index
+    st.progress((current_index) / total_problems)
+    st.write(f"문제 {current_index + 1}/{total_problems}")
+    
+    # 현재 문제 가져오기
+    if current_index < total_problems:
+        problem_key, problem_data = st.session_state.selected_problems[current_index]
+        
+        # 문제 표시
+        st.subheader(f"문제 {current_index + 1}")
+        st.write("**문제:**")
+        st.write(problem_data["question"])
+        
+        st.write("**맥락:**")
+        st.write(problem_data["context"])
+        
+        # 답변 입력
+        if len(st.session_state.answers) <= current_index:
+            user_answer = st.text_area("답변을 입력하세요:", height=150, key=f"answer_{current_index}")
+            st.session_state.answers.append("")  # 빈 답변 추가
+        else:
+            user_answer = st.text_area("답변을 입력하세요:", value=st.session_state.answers[current_index], height=150, key=f"answer_{current_index}")
+        
+        # 답변 임시 저장
+        if current_index < len(st.session_state.answers):
+            st.session_state.answers[current_index] = user_answer
+        
+        # 이동 버튼
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            if current_index > 0:
+                if st.button("이전 문제", key="prev_problem"):
+                    st.session_state.current_problem_index -= 1
+                    st.rerun()
+        
+        with col2:
+            if st.button("모든 답변 제출", key="submit_all"):
+                submit_all_answers()
+        
+        with col3:
+            if current_index < total_problems - 1:
+                if st.button("다음 문제", key="next_problem"):
+                    st.session_state.current_problem_index += 1
+                    st.rerun()
+    else:
+        # 모든 문제 완료
+        submit_all_answers()
+
+def submit_all_answers():
+    """모든 답변을 제출하고 피드백 생성"""
+    if not hasattr(st.session_state, 'selected_problems') or not hasattr(st.session_state, 'answers'):
+        st.error("문제 풀이 데이터가 없습니다.")
+        return
+    
+    st.header("모든 답변 제출 완료")
+    
+    # 답변 수 확인
+    total_submitted = sum(1 for answer in st.session_state.answers if answer.strip())
+    
+    if total_submitted == 0:
+        st.warning("제출된 답변이 없습니다.")
+        # 문제 풀이 모드 종료
+        st.session_state.solving_mode = False
+        st.button("문제 선택으로 돌아가기", on_click=lambda: st.rerun())
+        return
+    
+    with st.spinner("답변을 처리 중입니다..."):
+        # 각 문제에 대한 피드백 생성 및 저장
+        feedbacks = []
+        for i, ((problem_key, problem_data), answer) in enumerate(zip(st.session_state.selected_problems, st.session_state.answers)):
+            if not answer.strip():
+                feedbacks.append(None)
+                continue
+                
+            try:
+                feedback = generate_feedback(problem_data, answer)
+                feedbacks.append(feedback)
+                
+                # 학생 기록 저장
+                username = st.session_state.username
+                if username not in st.session_state.student_records:
+                    st.session_state.student_records[username] = {
+                        "solved_problems": [],
+                        "total_problems": 0,
+                        "feedback_history": []
+                    }
+                
+                # 문제 풀이 기록 추가
+                st.session_state.student_records[username]["solved_problems"].append({
+                    "problem": problem_data,
+                    "answer": answer,
+                    "feedback": feedback,
+                    "timestamp": datetime.datetime.now().isoformat()
+                })
+                
+                # 총 문제 수 증가
+                st.session_state.student_records[username]["total_problems"] += 1
+                
+            except Exception as e:
+                st.error(f"문제 {i+1}의 피드백 생성 중 오류 발생: {str(e)}")
+                feedbacks.append(None)
+        
+        # 데이터 저장
+        save_users_data()
+    
+    # 피드백 표시
+    st.success(f"{total_submitted}개의 답변이 성공적으로 제출되었습니다.")
+    
+    for i, ((problem_key, problem_data), answer, feedback) in enumerate(zip(st.session_state.selected_problems, st.session_state.answers, feedbacks)):
+        if not answer.strip():
+            continue
+            
+        with st.expander(f"문제 {i+1}: {problem_data['question'][:50]}...", expanded=i==0):
+            st.subheader("문제")
+            st.write(problem_data["question"])
+            
+            st.subheader("맥락")
+            st.write(problem_data["context"])
+            
+            st.subheader("내 답변")
+            st.write(answer)
+            
+            st.subheader("AI 첨삭")
+            if feedback:
+                st.markdown(feedback)
+            else:
+                st.error("첨삭을 생성하지 못했습니다.")
+    
+    # 문제 풀이 모드 종료
+    st.session_state.solving_mode = False
+    if st.button("문제 선택으로 돌아가기"):
+        st.rerun()
+
+def generate_feedback(problem_data, user_answer):
+    """AI를 사용하여 학생의 답변에 대한 첨삭을 생성하는 함수"""
+    try:
+        # OpenAI API 사용 시도
+        if st.session_state.openai_api_key:
+            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+            prompt = get_correction_prompt(problem_data, user_answer)
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
             )
             
-            if problem_key:
-                display_and_solve_problem(problem_key, category_problems[problem_key])
+            return response.choices[0].message.content
+        
+        # Gemini API 사용 시도
+        elif st.session_state.gemini_api_key:
+            try:
+                # API 키 다시 구성
+                genai.configure(api_key=st.session_state.gemini_api_key)
+                
+                # 사용 가능한 모델 확인
+                available_models = genai.list_models()
+                gemini_models = [m.name for m in available_models if "gemini" in m.name]
+                
+                if not gemini_models:
+                    raise Exception("사용 가능한 Gemini 모델이 없습니다. API 키를 확인하세요.")
+                
+                # 최신 모델 선택 (gemini-1.5-pro, gemini-1.5-flash, gemini-pro 순으로 시도)
+                model_name = None
+                for preferred_model in ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"]:
+                    if any(preferred_model in m for m in gemini_models):
+                        model_name = next(m for m in gemini_models if preferred_model in m)
+                        break
+                
+                if not model_name:
+                    model_name = gemini_models[0]  # 사용 가능한 첫 번째 모델 사용
+                
+                prompt = get_correction_prompt(problem_data, user_answer)
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                
+                if response and hasattr(response, 'text'):
+                    return response.text
+                else:
+                    raise Exception("Gemini API가 유효한 응답을 반환하지 않았습니다.")
+                
+            except Exception as e:
+                raise Exception(f"Gemini API 오류: {str(e)}")
+        
         else:
-            st.info("선택한 카테고리에 문제가 없습니다.")
-    else:
-        st.info("아직 등록된 문제가 없습니다. 선생님께 문의해주세요.")
+            raise Exception("API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
+    
+    except Exception as e:
+        raise Exception(f"첨삭 생성 중 오류 발생: {str(e)}")
 
 def student_learning_history():
     st.header("내 학습 기록")
@@ -2252,14 +2531,41 @@ def generate_feedback(problem_data, user_answer):
         
         # Gemini API 사용 시도
         elif st.session_state.gemini_api_key:
-            model = genai.GenerativeModel('gemini-pro')
-            prompt = get_correction_prompt(problem_data, user_answer)
-            
-            response = model.generate_content(prompt)
-            return response.text
+            try:
+                # API 키 다시 구성
+                genai.configure(api_key=st.session_state.gemini_api_key)
+                
+                # 사용 가능한 모델 확인
+                available_models = genai.list_models()
+                gemini_models = [m.name for m in available_models if "gemini" in m.name]
+                
+                if not gemini_models:
+                    raise Exception("사용 가능한 Gemini 모델이 없습니다. API 키를 확인하세요.")
+                
+                # 최신 모델 선택 (gemini-1.5-pro, gemini-1.5-flash, gemini-pro 순으로 시도)
+                model_name = None
+                for preferred_model in ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"]:
+                    if any(preferred_model in m for m in gemini_models):
+                        model_name = next(m for m in gemini_models if preferred_model in m)
+                        break
+                
+                if not model_name:
+                    model_name = gemini_models[0]  # 사용 가능한 첫 번째 모델 사용
+                
+                prompt = get_correction_prompt(problem_data, user_answer)
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                
+                if response and hasattr(response, 'text'):
+                    return response.text
+                else:
+                    raise Exception("Gemini API가 유효한 응답을 반환하지 않았습니다.")
+                
+            except Exception as e:
+                raise Exception(f"Gemini API 오류: {str(e)}")
         
         else:
-            raise Exception("API 키가 설정되지 않았습니다.")
+            raise Exception("API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
     
     except Exception as e:
         raise Exception(f"첨삭 생성 중 오류 발생: {str(e)}")
