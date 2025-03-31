@@ -164,7 +164,7 @@ def login_page():
     st.title("AI 영어 첨삭 앱 - 로그인")
     
     # 로그인 폼
-    username = st.text_input("사용자 이름", key="login_username")
+    username = st.text_input("아이디", key="login_username")
     password = st.text_input("비밀번호", type="password", key="login_password")
     
     col1, col2 = st.columns([1, 3])
@@ -176,7 +176,7 @@ def login_page():
             st.success("로그인 성공!")
             st.rerun()
         else:
-            st.error("사용자 이름 또는 비밀번호가 올바르지 않습니다.")
+            st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
     
     # 역할별 안내 메시지
     st.markdown("---")
@@ -229,7 +229,7 @@ def student_solve_problems():
     # 문제 옵션
     problem_option = st.radio(
         "문제를 선택하세요:",
-        ["예제 문제", "교사 출제 문제", "AI 생성 문제"],
+        ["예제 문제", "교사 출제 문제"],
         horizontal=True
     )
     
@@ -806,10 +806,16 @@ def teacher_problem_management():
     with tab2:
         st.subheader("새 문제 출제하기")
         
+        # 문제 유형 선택
+        problem_type = st.radio("문제 유형:", ["객관식", "주관식"], horizontal=True)
+        
         # 카테고리 선택
         custom_category = st.selectbox(
             "문제 카테고리:", 
-            ["개인/일상생활", "여행/문화", "교육/학업", "사회/이슈", "엔터테인먼트", "비즈니스/업무", "음식/요리", "기타"],
+            ["일상생활/자기소개", "학교생활/교육", "취미/여가활동", "여행/문화체험", 
+             "환경/사회문제", "과학/기술", "직업/진로", "건강/운동", 
+             "음식/요리", "예술/엔터테인먼트", "경제/비즈니스", "시사/뉴스",
+             "가족/인간관계", "감정/심리", "자연/동물", "기타"],
             key="new_category"
         )
         
@@ -819,7 +825,20 @@ def teacher_problem_management():
         # 문제 내용
         custom_question = st.text_area("문제를 입력하세요:", height=100, key="new_question")
         custom_context = st.text_area("문제의 맥락을 입력하세요:", height=100, key="new_context")
-        custom_example = st.text_area("예시 답안을 입력하세요 (선택사항):", height=100, key="new_example")
+        
+        # 객관식인 경우 보기 입력
+        if problem_type == "객관식":
+            st.subheader("보기 입력")
+            options = []
+            for i in range(4):
+                option = st.text_input(f"보기 {i+1}:", key=f"option_{i}")
+                if option:
+                    options.append(option)
+            correct_answer = st.selectbox("정답 선택:", [f"보기 {i+1}" for i in range(len(options))] if options else [])
+        
+        # 주관식인 경우 예시 답안
+        else:
+            custom_example = st.text_area("예시 답안을 입력하세요:", height=100, key="new_example")
         
         # 난이도 선택
         level_options = ["초급(초)", "초급(중)", "초급(상)", "중급(초)", "중급(중)", "중급(상)", "상급(초)", "상급(중)", "상급(상)"]
@@ -828,6 +847,8 @@ def teacher_problem_management():
         if st.button("문제 저장하기"):
             if not custom_name or not custom_question or not custom_context:
                 st.error("문제 이름, 문제 내용, 맥락은 필수 입력사항입니다.")
+            elif problem_type == "객관식" and (len(options) < 4 or not correct_answer):
+                st.error("객관식 문제는 4개의 보기와 정답을 모두 입력해야 합니다.")
             else:
                 problem_key = f"{custom_category}/{custom_name}"
                 
@@ -836,16 +857,23 @@ def teacher_problem_management():
                     st.error(f"동일한 카테고리와 이름의 문제가 이미 존재합니다: {problem_key}")
                 else:
                     # 문제 저장
-                    st.session_state.teacher_problems[problem_key] = {
+                    problem_data = {
                         "category": custom_category,
                         "question": custom_question,
                         "context": custom_context,
-                        "example": custom_example,
+                        "type": problem_type,
                         "level": custom_level,
                         "created_by": st.session_state.username,
                         "created_at": datetime.datetime.now().isoformat()
                     }
                     
+                    if problem_type == "객관식":
+                        problem_data["options"] = options
+                        problem_data["correct_answer"] = correct_answer
+                    else:
+                        problem_data["example"] = custom_example
+                    
+                    st.session_state.teacher_problems[problem_key] = problem_data
                     save_users_data()
                     st.success(f"문제 '{custom_name}'이(가) 저장되었습니다.")
     
@@ -947,8 +975,10 @@ def teacher_problem_management():
         else:
             # 문제 생성을 위한 카테고리 선택
             ai_topic_options = [
-                "개인/일상생활", "여행/문화", "교육/학업", "사회/이슈", 
-                "엔터테인먼트", "비즈니스/업무", "음식/요리", "스포츠/취미"
+                "일상생활/자기소개", "학교생활/교육", "취미/여가활동", "여행/문화체험", 
+                "환경/사회문제", "과학/기술", "직업/진로", "건강/운동", 
+                "음식/요리", "예술/엔터테인먼트", "경제/비즈니스", "시사/뉴스",
+                "가족/인간관계", "감정/심리", "자연/동물", "기타"
             ]
             
             ai_topic = st.selectbox("AI가 문제를 생성할 주제를 선택하세요:", ai_topic_options, key="ai_topic")
@@ -958,7 +988,7 @@ def teacher_problem_management():
             ai_level = st.selectbox("난이도:", level_options, key="ai_level")
             
             # 문제 수 선택
-            num_problems = st.slider("생성할 문제 수:", 1, 5, 1)
+            num_problems = st.slider("생성할 문제 수:", 1, 10, 5)
             
             # API 모델 선택
             api_model = st.radio("사용할 AI 모델:", ["OpenAI GPT", "Gemini"], horizontal=True, key="ai_model")
@@ -977,13 +1007,22 @@ def teacher_problem_management():
                                 messages=[
                                     {"role": "system", "content": "You are an expert English teacher creating practice problems for Korean students."},
                                     {"role": "user", "content": f"""
-                                    Create {num_problems} English writing practice problems on the topic of {ai_topic} at {ai_level} level for Korean students.
+                                    Create {num_problems} English practice problems on the topic of {ai_topic} at {ai_level} level for Korean students.
+                                    
+                                    The ratio should be:
+                                    - 80% multiple choice questions (with 4 options and correct answer)
+                                    - 20% open-ended questions (with example answer)
                                     
                                     Return the problems in JSON format as an array of objects with the following fields:
                                     - name: A short descriptive name for the problem (in Korean)
-                                    - question: The writing prompt or question
-                                    - context: Brief context or background for the question
-                                    - example: A sample answer showing what a good response might look like
+                                    - type: "multiple_choice" or "open_ended"
+                                    - question: The question or prompt
+                                    - context: Brief context or background
+                                    For multiple choice questions also include:
+                                    - options: Array of 4 options
+                                    - correct_answer: The correct option number (1-4)
+                                    For open-ended questions also include:
+                                    - example: A sample answer
                                     
                                     Make sure the difficulty is appropriate for a {ai_level} level Korean student learning English.
                                     """}
