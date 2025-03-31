@@ -20,8 +20,11 @@ load_dotenv()
 # Initialize API configurations
 try:
     import google.generativeai as genai
-    if os.getenv("GOOGLE_API_KEY"):
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+    # 환경 변수 이름을 GOOGLE_API_KEY로 통일
+    # 이전 버전 호환성을 위해 GEMINI_API_KEY도 체크
+    google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if google_api_key:
+        genai.configure(api_key=google_api_key)
 except ImportError:
     st.error("google-generativeai 패키지가 설치되지 않았습니다. 'pip install google-generativeai'를 실행해주세요.")
 except Exception as e:
@@ -31,7 +34,8 @@ except Exception as e:
 if 'openai_api_key' not in st.session_state:
     st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
 if 'gemini_api_key' not in st.session_state:
-    st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    # 환경 변수 이름을 통일하되, 이전 버전 호환성 유지
+    st.session_state.gemini_api_key = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
 
 # Page configuration
 st.set_page_config(
@@ -77,7 +81,8 @@ def initialize_session_states():
     if 'openai_api_key' not in st.session_state:
         st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
     if 'gemini_api_key' not in st.session_state:
-        st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+        # 환경 변수 이름을 통일하되, 이전 버전 호환성 유지
+        st.session_state.gemini_api_key = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
 
 # Initialize session state
 initialize_session_states()
@@ -919,13 +924,35 @@ D.
                     
                     # Google Gemini 사용
                     elif model_choice == "Google Gemini" and st.session_state.get('gemini_api_key'):
-                        genai.configure(api_key=st.session_state.gemini_api_key)
-                        model = genai.GenerativeModel('gemini-pro')
-                        response = model.generate_content(base_prompt)
-                        if response and hasattr(response, 'text'):
-                            problems = response.text
-                        else:
-                            st.error("Gemini API가 유효한 응답을 반환하지 않았습니다.")
+                        try:
+                            # API 키 다시 구성
+                            genai.configure(api_key=st.session_state.gemini_api_key)
+                            
+                            # 사용 가능한 모델 확인
+                            available_models = genai.list_models()
+                            gemini_models = [m.name for m in available_models if "gemini" in m.name]
+                            
+                            if not gemini_models:
+                                st.error("사용 가능한 Gemini 모델이 없습니다. API 키를 확인하세요.")
+                                return
+                                
+                            # 가장 적합한 모델 선택
+                            model_name = "gemini-pro"
+                            if model_name not in [m.name for m in available_models]:
+                                model_name = gemini_models[0]
+                                st.info(f"gemini-pro 모델을 사용할 수 없어 {model_name} 모델을 사용합니다.")
+                            
+                            model = genai.GenerativeModel(model_name)
+                            response = model.generate_content(base_prompt)
+                            
+                            if response and hasattr(response, 'text'):
+                                problems = response.text
+                            else:
+                                st.error("Gemini API가 유효한 응답을 반환하지 않았습니다.")
+                                return
+                        except Exception as e:
+                            st.error(f"Gemini API 호출 중 오류 발생: {str(e)}")
+                            st.info("API 키를 확인하고 다시 시도해보세요.")
                             return
                     
                     if problems and len(problems.strip()) > 0:
@@ -1421,7 +1448,8 @@ def admin_api_settings():
     with col1:
         if st.button("API 키 유지하기"):
             st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-            st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+            # GOOGLE_API_KEY 또는 GEMINI_API_KEY 중 존재하는 값 사용
+            st.session_state.gemini_api_key = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
             st.success("API 키가 환경 변수에서 다시 로드되었습니다.")
     
     with col2:
@@ -1431,7 +1459,7 @@ def admin_api_settings():
             try:
                 with open(".env", "w") as f:
                     f.write("OPENAI_API_KEY=\n")
-                    f.write("GEMINI_API_KEY=\n")
+                    f.write("GOOGLE_API_KEY=\n")
                 st.success("API 키가 초기화되었습니다.")
             except Exception as e:
                 st.error(f"API 키 초기화 중 오류가 발생했습니다: {e}")
@@ -1450,10 +1478,23 @@ def admin_api_settings():
         st.session_state.openai_api_key = openai_api_key.strip()
         # .env 파일에 저장
         try:
+            # 기존 환경 변수 읽기
+            env_vars = {}
+            if os.path.exists(".env"):
+                with open(".env", "r") as f:
+                    for line in f:
+                        if "=" in line:
+                            key, value = line.strip().split("=", 1)
+                            env_vars[key] = value
+
+            # OpenAI API 키 업데이트
+            env_vars["OPENAI_API_KEY"] = openai_api_key.strip()
+            
+            # 파일에 저장
             with open(".env", "w") as f:
-                f.write(f"OPENAI_API_KEY={openai_api_key.strip()}\n")
-                if st.session_state.gemini_api_key:
-                    f.write(f"GEMINI_API_KEY={st.session_state.gemini_api_key}\n")
+                for key, value in env_vars.items():
+                    f.write(f"{key}={value}\n")
+                    
             st.success("OpenAI API 키가 저장되었습니다.")
         except Exception as e:
             st.error(f"API 키 저장 중 오류가 발생했습니다: {e}")
@@ -1472,11 +1513,25 @@ def admin_api_settings():
         st.session_state.gemini_api_key = gemini_api_key.strip()
         # .env 파일에 저장
         try:
+            # 기존 환경 변수 읽기
+            env_vars = {}
+            if os.path.exists(".env"):
+                with open(".env", "r") as f:
+                    for line in f:
+                        if "=" in line:
+                            key, value = line.strip().split("=", 1)
+                            env_vars[key] = value
+
+            # Gemini API 키 업데이트 (GOOGLE_API_KEY로 통일)
+            env_vars["GOOGLE_API_KEY"] = gemini_api_key.strip()
+            
+            # 파일에 저장
             with open(".env", "w") as f:
-                if st.session_state.openai_api_key:
-                    f.write(f"OPENAI_API_KEY={st.session_state.openai_api_key}\n")
-                f.write(f"GEMINI_API_KEY={gemini_api_key.strip()}\n")
+                for key, value in env_vars.items():
+                    f.write(f"{key}={value}\n")
+                    
             st.success("Gemini API 키가 저장되었습니다.")
+            
             # Gemini API 초기화
             if gemini_api_key.strip():
                 genai.configure(api_key=gemini_api_key.strip())
@@ -1520,14 +1575,36 @@ def admin_api_settings():
             else:
                 try:
                     with st.spinner("Gemini API 연결 테스트 중..."):
-                        model = genai.GenerativeModel('gemini-pro')
+                        # 연결 전 API 키 재설정
+                        genai.configure(api_key=st.session_state.gemini_api_key)
+                        
+                        # 사용 가능한 모델 목록 확인
+                        available_models = genai.list_models()
+                        gemini_models = [m.name for m in available_models if "gemini" in m.name]
+                        
+                        if not gemini_models:
+                            st.error("사용 가능한 Gemini 모델이 없습니다.")
+                            return
+                            
+                        # 가장 적합한 모델 선택
+                        model_name = "gemini-pro"
+                        if model_name not in gemini_models and gemini_models:
+                            model_name = gemini_models[0]
+                            st.info(f"기본 모델을 사용할 수 없어 {model_name} 모델을 사용합니다.")
+                            
+                        model = genai.GenerativeModel(model_name)
                         response = model.generate_content("Hello, can you hear me? Please respond with 'Yes, I can hear you clearly.'")
-                        if "I can hear you" in response.text:
+                        
+                        if hasattr(response, 'text') and "I can hear you" in response.text:
                             st.success("Gemini API 연결 테스트 성공!")
                         else:
-                            st.warning(f"API가 응답했지만 예상과 다릅니다: {response.text}")
+                            content = getattr(response, 'text', str(response))
+                            st.warning(f"API가 응답했지만 예상과 다릅니다: {content}")
+                            
                 except Exception as e:
-                    st.error(f"Gemini API 연결 테스트 실패: {e}")
+                    st.error(f"Gemini API 연결 테스트 실패: {str(e)}")
+                    st.info("테스트 실패 원인: API 키가 올바르지 않거나 네트워크 연결 문제일 수 있습니다.")
+                    st.code(f"오류 상세: {str(e)}", language="python")
 
 def admin_user_management():
     st.header("사용자 관리")
