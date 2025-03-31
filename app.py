@@ -13,14 +13,25 @@ import zipfile
 from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
-import google.generativeai as genai
 
-# Load environment variables
+# Load environment variables first
 load_dotenv()
 
-# Initialize Gemini
-if 'gemini_api_key' in st.session_state and st.session_state.gemini_api_key:
-    genai.configure(api_key=st.session_state.gemini_api_key)
+# Initialize API configurations
+try:
+    import google.generativeai as genai
+    if 'gemini_api_key' in st.session_state and st.session_state.gemini_api_key:
+        genai.configure(api_key=st.session_state.gemini_api_key)
+except ImportError:
+    st.error("Gemini API 모듈을 찾을 수 없습니다. 'pip install google-generativeai' 명령어로 설치해주세요.")
+except Exception as e:
+    st.error(f"Gemini API 초기화 중 오류가 발생했습니다: {str(e)}")
+
+# Initialize session state
+if 'openai_api_key' not in st.session_state:
+    st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+if 'gemini_api_key' not in st.session_state:
+    st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
 # Page configuration
 st.set_page_config(
@@ -37,10 +48,6 @@ def initialize_session_states():
         st.session_state.user_answer = ""
     if 'feedback' not in st.session_state:
         st.session_state.feedback = None
-    if 'openai_api_key' not in st.session_state:
-        st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-    if 'gemini_api_key' not in st.session_state:
-        st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
     if 'input_method' not in st.session_state:
         st.session_state.input_method = "text"
     if 'custom_problems' not in st.session_state:
@@ -168,25 +175,6 @@ def register_user(username, password, role, name, email, created_by=None):
 def login_page():
     st.title("학원자동시스템관리 - 로그인")
     
-    with st.expander("역할별 안내 보기", expanded=False):
-        st.info("""
-        ### 역할별 안내
-        
-        **학생**
-        - 문제 풀기 및 학습 기록 확인
-        - AI 첨삭 받기
-        
-        **교사**
-        - 문제 출제 및 관리
-        - 학생 등록 및 관리
-        - 학생 답변 채점 및 첨삭
-        
-        **관리자**
-        - 시스템 전체 관리
-        - API 키 설정
-        - 데이터 백업 및 복원
-        """)
-    
     # 로그인 폼
     username = st.text_input("아이디", key="login_username")
     password = st.text_input("비밀번호", type="password", key="login_password")
@@ -202,25 +190,23 @@ def login_page():
         else:
             st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
     
-    # 역할별 안내 메시지
-    st.markdown("---")
-    st.info("""
-    ### 역할별 안내
-    
-    **학생**
-    - 문제 풀기 및 학습 기록 확인
-    - AI 첨삭 받기
-    
-    **교사**
-    - 문제 출제 및 관리
-    - 학생 등록 및 관리
-    - 학생 답변 채점 및 첨삭
-    
-    **관리자**
-    - 시스템 전체 관리
-    - API 키 설정
-    - 데이터 백업 및 복원
-    """)
+    # 역할별 안내 정보
+    with st.expander("역할별 안내", expanded=False):
+        st.info("""
+        ### 학생
+        - 문제 풀기 및 학습 기록 확인
+        - AI 첨삭 받기
+        
+        ### 교사
+        - 문제 출제 및 관리
+        - 학생 등록 및 관리
+        - 학생 답변 채점 및 첨삭
+        
+        ### 관리자
+        - 시스템 전체 관리
+        - API 키 설정
+        - 데이터 백업 및 복원
+        """)
 
 # Student Dashboard
 def student_dashboard():
