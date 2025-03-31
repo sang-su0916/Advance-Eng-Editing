@@ -315,9 +315,9 @@ def login_page():
         else:
             st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
     
-    # 데모 계정 정보
-    with st.expander("데모 계정 정보", expanded=False):
-        st.markdown("""
+    # 데모 계정 정보 섹션 삭제
+    """with st.expander("데모 계정 정보", expanded=False):
+        st.markdown(
         ### 데모 계정
         > 시스템을 체험해볼 수 있는 데모 계정입니다.
         
@@ -332,7 +332,7 @@ def login_page():
         **관리자:**
         - 아이디: admin
         - 비밀번호: admin123
-        """)
+        )"""
 
 # Student Dashboard
 def student_dashboard():
@@ -2990,7 +2990,7 @@ def main():
 if __name__ == "__main__":
     main()
 
-# CSV 샘플 생성 함수 추가
+# CSV 샘플 생성 함수 - 메인 함수 호출 전으로 이동
 def create_sample_csv():
     """샘플 CSV 파일 생성"""
     data = [
