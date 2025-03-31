@@ -9,6 +9,7 @@ import csv
 import io
 import datetime
 import altair as alt
+import zipfile
 from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
@@ -109,14 +110,22 @@ def hash_password(password):
 
 def login_user(username, password):
     """사용자 로그인 처리"""
-    if username in st.session_state.users:
-        hashed_password = hash_password(password)
-        if st.session_state.users[username]["password"] == hashed_password:
-            st.session_state.logged_in = True
-            st.session_state.username = username
-            st.session_state.user_role = st.session_state.users[username]["role"]
-            return True
-    return False
+    try:
+        if username in st.session_state.users:
+            hashed_password = hash_password(password)
+            if st.session_state.users[username]["password"] == hashed_password:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.user_role = st.session_state.users[username]["role"]
+                return True
+            else:
+                st.error("비밀번호가 일치하지 않습니다.")
+        else:
+            st.error("존재하지 않는 사용자입니다.")
+        return False
+    except Exception as e:
+        st.error(f"로그인 처리 중 오류가 발생했습니다: {e}")
+        return False
 
 def logout_user():
     """사용자 로그아웃 처리"""
@@ -1739,27 +1748,96 @@ def admin_backup_restore():
     with tab1:
         st.subheader("현재 데이터 백업")
         
-        st.info("현재 시스템 데이터를 JSON 파일로 백업할 수 있습니다.")
+        # 백업 형식 선택
+        backup_format = st.radio("백업 형식 선택:", ["JSON", "CSV"])
         
         if st.button("백업 파일 생성"):
             try:
-                users_data = {
-                    "users": st.session_state.users,
-                    "teacher_problems": st.session_state.teacher_problems,
-                    "student_records": st.session_state.student_records
-                }
-                
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                json_str = json.dumps(users_data, ensure_ascii=False, indent=4)
                 
-                st.download_button(
-                    label="백업 파일 다운로드",
-                    data=json_str,
-                    file_name=f"ai_english_backup_{timestamp}.json",
-                    mime="application/json"
-                )
+                if backup_format == "JSON":
+                    # JSON 백업
+                    users_data = {
+                        "users": st.session_state.users,
+                        "teacher_problems": st.session_state.teacher_problems,
+                        "student_records": st.session_state.student_records
+                    }
+                    json_str = json.dumps(users_data, ensure_ascii=False, indent=4)
+                    
+                    st.download_button(
+                        label="JSON 백업 파일 다운로드",
+                        data=json_str,
+                        file_name=f"ai_english_backup_{timestamp}.json",
+                        mime="application/json"
+                    )
+                
+                else:
+                    # CSV 백업
+                    # 사용자 데이터
+                    users_df = pd.DataFrame([
+                        {
+                            "username": username,
+                            "name": data.get("name", ""),
+                            "email": data.get("email", ""),
+                            "role": data.get("role", ""),
+                            "password": data.get("password", ""),
+                            "created_by": data.get("created_by", ""),
+                            "created_at": data.get("created_at", "")
+                        }
+                        for username, data in st.session_state.users.items()
+                    ])
+                    
+                    # CSV 파일들을 ZIP으로 압축
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        # 사용자 데이터 저장
+                        users_csv = users_df.to_csv(index=False)
+                        zip_file.writestr('users.csv', users_csv)
+                        
+                        # 문제 데이터 저장
+                        problems_df = pd.DataFrame([
+                            {
+                                "key": key,
+                                "category": data.get("category", ""),
+                                "question": data.get("question", ""),
+                                "context": data.get("context", ""),
+                                "example": data.get("example", ""),
+                                "level": data.get("level", ""),
+                                "created_by": data.get("created_by", ""),
+                                "created_at": data.get("created_at", "")
+                            }
+                            for key, data in st.session_state.teacher_problems.items()
+                        ])
+                        problems_csv = problems_df.to_csv(index=False)
+                        zip_file.writestr('problems.csv', problems_csv)
+                        
+                        # 학생 기록 데이터 저장
+                        records_data = []
+                        for student_id, record in st.session_state.student_records.items():
+                            for problem in record.get("solved_problems", []):
+                                records_data.append({
+                                    "student_id": student_id,
+                                    "timestamp": problem.get("timestamp", ""),
+                                    "question": problem.get("problem", {}).get("question", ""),
+                                    "answer": problem.get("answer", ""),
+                                    "feedback": problem.get("feedback", ""),
+                                    "teacher_feedback": problem.get("teacher_feedback", ""),
+                                    "score": problem.get("teacher_score", "")
+                                })
+                        
+                        records_df = pd.DataFrame(records_data)
+                        records_csv = records_df.to_csv(index=False)
+                        zip_file.writestr('student_records.csv', records_csv)
+                    
+                    st.download_button(
+                        label="CSV 백업 파일 다운로드 (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"ai_english_backup_{timestamp}.zip",
+                        mime="application/zip"
+                    )
                 
                 st.success("백업 파일이 생성되었습니다. 다운로드 버튼을 클릭하여 저장하세요.")
+            
             except Exception as e:
                 st.error(f"백업 파일 생성 중 오류가 발생했습니다: {e}")
     
@@ -1769,34 +1847,115 @@ def admin_backup_restore():
         
         st.warning("데이터 복원 시 현재 시스템의 모든 데이터가 백업 파일의 데이터로 대체됩니다.")
         
-        uploaded_file = st.file_uploader("백업 파일 업로드", type=["json"])
+        # 복원 형식 선택
+        restore_format = st.radio("복원 파일 형식:", ["JSON", "CSV (ZIP)"])
         
-        if uploaded_file is not None:
-            try:
-                backup_data = json.loads(uploaded_file.getvalue().decode("utf-8"))
-                
-                # 데이터 구조 검증
-                if "users" not in backup_data or "teacher_problems" not in backup_data or "student_records" not in backup_data:
-                    st.error("유효하지 않은 백업 파일입니다. 필수 데이터 구조가 누락되었습니다.")
-                else:
-                    st.write("백업 파일 정보:")
-                    st.write(f"- 사용자 수: {len(backup_data['users'])}")
-                    st.write(f"- 교사 문제 수: {len(backup_data['teacher_problems'])}")
-                    st.write(f"- 학생 기록 수: {len(backup_data['student_records'])}")
+        if restore_format == "JSON":
+            uploaded_file = st.file_uploader("JSON 백업 파일 업로드", type=["json"])
+            
+            if uploaded_file is not None:
+                try:
+                    backup_data = json.loads(uploaded_file.getvalue().decode("utf-8"))
                     
-                    confirm_restore = st.checkbox("복원을 확인합니다. 현재 데이터가 모두 대체됩니다.")
-                    
-                    if st.button("데이터 복원") and confirm_restore:
-                        # 데이터 복원
-                        st.session_state.users = backup_data["users"]
-                        st.session_state.teacher_problems = backup_data["teacher_problems"]
-                        st.session_state.student_records = backup_data["student_records"]
+                    if "users" not in backup_data or "teacher_problems" not in backup_data or "student_records" not in backup_data:
+                        st.error("유효하지 않은 백업 파일입니다. 필수 데이터 구조가 누락되었습니다.")
+                    else:
+                        st.write("백업 파일 정보:")
+                        st.write(f"- 사용자 수: {len(backup_data['users'])}")
+                        st.write(f"- 교사 문제 수: {len(backup_data['teacher_problems'])}")
+                        st.write(f"- 학생 기록 수: {len(backup_data['student_records'])}")
                         
-                        save_users_data()
-                        st.success("데이터가 성공적으로 복원되었습니다.")
-                        st.info("변경 사항을 적용하려면 앱을 새로고침하세요.")
-            except Exception as e:
-                st.error(f"백업 파일 처리 중 오류가 발생했습니다: {e}")
+                        confirm_restore = st.checkbox("복원을 확인합니다. 현재 데이터가 모두 대체됩니다.")
+                        
+                        if st.button("데이터 복원") and confirm_restore:
+                            st.session_state.users = backup_data["users"]
+                            st.session_state.teacher_problems = backup_data["teacher_problems"]
+                            st.session_state.student_records = backup_data["student_records"]
+                            
+                            save_users_data()
+                            st.success("데이터가 성공적으로 복원되었습니다.")
+                            st.info("변경 사항을 적용하려면 앱을 새로고침하세요.")
+                
+                except Exception as e:
+                    st.error(f"JSON 파일 처리 중 오류가 발생했습니다: {e}")
+        
+        else:
+            uploaded_file = st.file_uploader("ZIP 백업 파일 업로드", type=["zip"])
+            
+            if uploaded_file is not None:
+                try:
+                    zip_buffer = io.BytesIO(uploaded_file.getvalue())
+                    
+                    with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
+                        # 사용자 데이터 복원
+                        users_df = pd.read_csv(zip_file.open('users.csv'))
+                        
+                        # 문제 데이터 복원
+                        problems_df = pd.read_csv(zip_file.open('problems.csv'))
+                        
+                        # 학생 기록 데이터 복원
+                        records_df = pd.read_csv(zip_file.open('student_records.csv'))
+                        
+                        st.write("백업 파일 정보:")
+                        st.write(f"- 사용자 수: {len(users_df)}")
+                        st.write(f"- 교사 문제 수: {len(problems_df)}")
+                        st.write(f"- 학생 기록 수: {len(records_df)}")
+                        
+                        confirm_restore = st.checkbox("복원을 확인합니다. 현재 데이터가 모두 대체됩니다.")
+                        
+                        if st.button("데이터 복원") and confirm_restore:
+                            # CSV 데이터를 원래 형식으로 변환
+                            st.session_state.users = {
+                                row['username']: {
+                                    'name': row['name'],
+                                    'email': row['email'],
+                                    'role': row['role'],
+                                    'password': row['password'],
+                                    'created_by': row['created_by'],
+                                    'created_at': row['created_at']
+                                }
+                                for _, row in users_df.iterrows()
+                            }
+                            
+                            st.session_state.teacher_problems = {
+                                row['key']: {
+                                    'category': row['category'],
+                                    'question': row['question'],
+                                    'context': row['context'],
+                                    'example': row['example'],
+                                    'level': row['level'],
+                                    'created_by': row['created_by'],
+                                    'created_at': row['created_at']
+                                }
+                                for _, row in problems_df.iterrows()
+                            }
+                            
+                            # 학생 기록 재구성
+                            st.session_state.student_records = {}
+                            for _, row in records_df.iterrows():
+                                student_id = row['student_id']
+                                if student_id not in st.session_state.student_records:
+                                    st.session_state.student_records[student_id] = {
+                                        'solved_problems': [],
+                                        'total_problems': 0
+                                    }
+                                
+                                st.session_state.student_records[student_id]['solved_problems'].append({
+                                    'timestamp': row['timestamp'],
+                                    'problem': {'question': row['question']},
+                                    'answer': row['answer'],
+                                    'feedback': row['feedback'],
+                                    'teacher_feedback': row['teacher_feedback'],
+                                    'teacher_score': row['score']
+                                })
+                                st.session_state.student_records[student_id]['total_problems'] += 1
+                            
+                            save_users_data()
+                            st.success("데이터가 성공적으로 복원되었습니다.")
+                            st.info("변경 사항을 적용하려면 앱을 새로고침하세요.")
+                
+                except Exception as e:
+                    st.error(f"ZIP 파일 처리 중 오류가 발생했습니다: {e}")
 
 def admin_system_info():
     st.header("시스템 정보")
