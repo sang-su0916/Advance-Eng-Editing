@@ -3,7 +3,6 @@ import os
 import openai
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import json
 import hashlib
 import csv
@@ -13,6 +12,8 @@ import altair as alt
 from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
+
+# matplotlib 제거 - Streamlit의 내장 차트 기능만 사용
 
 # 환경 변수 로드
 load_dotenv()
@@ -590,7 +591,7 @@ def student_records_page():
             '학습 수': counts
         })
         
-        # 차트 표시
+        # 차트 표시 (Streamlit 내장 차트 사용)
         st.bar_chart(chart_data.set_index('날짜'))
     
     # 상세 기록 조회
