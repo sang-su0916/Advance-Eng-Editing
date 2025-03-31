@@ -493,6 +493,41 @@ def generate_ai_problems():
     try:
         st.subheader("AI로 문제 생성하기")
         
+        # API 키 설정 섹션
+        st.info("API 키가 설정되지 않은 경우 여기서 직접 입력할 수 있습니다.")
+        
+        # API 키 입력 옵션
+        api_key_option = st.radio(
+            "API 키 설정 방식:",
+            ["환경 변수 사용", "직접 입력"],
+            help="API 키를 환경 변수에서 가져올지, 직접 입력할지 선택하세요."
+        )
+        
+        if api_key_option == "직접 입력":
+            col1, col2 = st.columns(2)
+            with col1:
+                temp_openai_key = st.text_input(
+                    "OpenAI API 키 입력:",
+                    type="password",
+                    value=st.session_state.openai_api_key
+                )
+            with col2:
+                temp_gemini_key = st.text_input(
+                    "Gemini API 키 입력:",
+                    type="password",
+                    value=st.session_state.gemini_api_key
+                )
+            
+            # 임시 API 키 저장
+            if st.button("API 키 적용"):
+                st.session_state.openai_api_key = temp_openai_key
+                st.session_state.gemini_api_key = temp_gemini_key
+                if temp_gemini_key:
+                    genai.configure(api_key=temp_gemini_key)
+                st.success("API 키가 적용되었습니다.")
+        
+        st.markdown("---")
+        
         # 학교급 선택
         school_type = st.selectbox(
             "학교급:", 
@@ -533,7 +568,7 @@ def generate_ai_problems():
         num_problems = st.slider(
             "생성할 문제 수:", 
             min_value=1, 
-            max_value=10, 
+            max_tokens=10, 
             value=5,
             help="한 번에 생성할 문제의 수를 선택하세요."
         )
@@ -547,7 +582,7 @@ def generate_ai_problems():
 
         if st.button("AI 문제 생성하기"):
             if not check_api_key():
-                st.error("API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 확인해주세요.")
+                st.error("API 키가 설정되지 않았습니다. 위에서 API 키를 입력하거나 관리자 설정에서 API 키를 확인해주세요.")
                 return
 
             with st.spinner("문제를 생성하는 중입니다..."):
@@ -648,32 +683,19 @@ D.
                                 st.error("저장할 문제 내용이 없습니다.")
                                 return
                             
-                            # 문제 데이터 구조화
-                            problem_data = {
-                                "school_type": school_type,
-                                "grade": grade,
-                                "topic": topic,
-                                "difficulty": difficulty,
-                                "content": edited_problems,
-                                "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "created_by": st.session_state.username,
-                                "status": "approved"
-                            }
+                            success, message = save_generated_problems(
+                                edited_problems,
+                                school_type,
+                                grade,
+                                topic,
+                                difficulty
+                            )
                             
-                            # 고유한 키 생성
-                            problem_key = f"{school_type}_{grade}_{topic}_{difficulty}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-                            
-                            # 문제 저장
-                            if 'teacher_problems' not in st.session_state:
-                                st.session_state.teacher_problems = {}
-                            
-                            st.session_state.teacher_problems[problem_key] = problem_data
-                            
-                            if save_users_data():
-                                st.success("문제가 성공적으로 저장되었습니다.")
+                            if success:
+                                st.success(message)
                                 st.rerun()
                             else:
-                                st.error("문제 저장 중 오류가 발생했습니다.")
+                                st.error(message)
                     else:
                         st.error("문제 생성에 실패했습니다. 다시 시도해주세요.")
                 
