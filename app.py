@@ -13,9 +13,14 @@ import zipfile
 from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
+import google.generativeai as genai  # Gemini API 임포트 추가
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Gemini
+if 'gemini_api_key' in st.session_state and st.session_state.gemini_api_key:
+    genai.configure(api_key=st.session_state.gemini_api_key)
 
 # Page configuration
 st.set_page_config(
@@ -163,7 +168,24 @@ def register_user(username, password, role, name, email, created_by=None):
 def login_page():
     st.title("학원자동시스템관리 - 로그인")
     
-    show_role_info()  # 역할별 안내 표시 (기본적으로 접혀있음)
+    with st.expander("역할별 안내 보기", expanded=False):
+        st.info("""
+        ### 역할별 안내
+        
+        **학생**
+        - 문제 풀기 및 학습 기록 확인
+        - AI 첨삭 받기
+        
+        **교사**
+        - 문제 출제 및 관리
+        - 학생 등록 및 관리
+        - 학생 답변 채점 및 첨삭
+        
+        **관리자**
+        - 시스템 전체 관리
+        - API 키 설정
+        - 데이터 백업 및 복원
+        """)
     
     # 로그인 폼
     username = st.text_input("아이디", key="login_username")
@@ -228,322 +250,28 @@ def student_dashboard():
 def student_solve_problems():
     st.header("문제 풀기")
     
-    # 문제 옵션
-    problem_option = st.radio(
-        "문제를 선택하세요:",
-        ["교사 출제 문제"],
-        horizontal=True
-    )
-    
-    if problem_option == "교사 출제 문제":
-        # 카테고리 선택
-        categories = list(set(p.get("category", "기타") for p in st.session_state.teacher_problems.values()))
-        if categories:
-            selected_category = st.selectbox("카테고리 선택:", categories)
-            
-            # 선택된 카테고리의 문제 목록
-            category_problems = {k: v for k, v in st.session_state.teacher_problems.items() 
-                               if v.get("category") == selected_category}
-            
-            if category_problems:
-                problem_key = st.selectbox(
-                    "문제 선택:",
-                    list(category_problems.keys()),
-                    format_func=lambda x: f"{x} ({category_problems[x].get('level', '난이도 미지정')})"
-                )
-                
-                if problem_key:
-                    display_and_solve_problem(problem_key, category_problems[problem_key])
-            else:
-                st.info("선택한 카테고리에 문제가 없습니다.")
-    
-    # 예제 문제 탭
-    elif problem_option == "예제 문제":
-        # 카테고리별로 정렬
-        categories = {}
-        for key, problem in SAMPLE_PROBLEMS.items():
-            category = problem.get("category", "기타")
-            if category not in categories:
-                categories[category] = []
-            categories[category].append(key)
-        
-        # 카테고리 선택
-        selected_category = st.selectbox(
-            "카테고리를 선택하세요:",
-            list(categories.keys())
-        )
+    # 카테고리 선택
+    categories = list(set(p.get("category", "기타") for p in st.session_state.teacher_problems.values()))
+    if categories:
+        selected_category = st.selectbox("카테고리 선택:", categories)
         
         # 선택된 카테고리의 문제 목록
-        if selected_category:
-            # 문제 이름만 보여주기 위해 키에서 카테고리 부분 제거
-            display_names = {}
-            for key in categories[selected_category]:
-                display_name = key.split('/')[-1] if '/' in key else key
-                display_names[display_name] = key
-                
-            problem_display = st.selectbox(
-                "문제를 선택하세요:",
-                list(display_names.keys())
+        category_problems = {k: v for k, v in st.session_state.teacher_problems.items() 
+                           if v.get("category") == selected_category}
+        
+        if category_problems:
+            problem_key = st.selectbox(
+                "문제 선택:",
+                list(category_problems.keys()),
+                format_func=lambda x: f"{x} ({category_problems[x].get('level', '난이도 미지정')})"
             )
             
-            if problem_display:
-                problem_key = display_names[problem_display]
-                
-                # 문제가 변경되었는지 확인하고 필요시 초기화
-                problem_changed = reset_feedback_if_problem_changed(problem_key)
-                
-                st.session_state.current_problem = SAMPLE_PROBLEMS[problem_key]
-    
-    elif problem_option == "AI 생성 문제":
-        if not st.session_state.openai_api_key and not st.session_state.gemini_api_key:
-            st.error("API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
+            if problem_key:
+                display_and_solve_problem(problem_key, category_problems[problem_key])
         else:
-            # 문제 생성을 위한 카테고리 선택
-            ai_topic_options = [
-                "개인/일상생활", "여행/문화", "교육/학업", "사회/이슈", 
-                "엔터테인먼트", "비즈니스/업무", "음식/요리", "스포츠/취미"
-            ]
-            
-            ai_topic = st.selectbox("AI가 문제를 생성할 주제를 선택하세요:", ai_topic_options)
-            
-            # 난이도 선택 세분화 - 깔끔한 2단계 선택 UI
-            st.subheader("난이도 선택")
-            
-            # 난이도 데이터 구성
-            level_groups = ["초급", "중급", "상급"]
-            level_details = {
-                "초급": ["초", "중", "상"],
-                "중급": ["초", "중", "상"],
-                "상급": ["초", "중", "상"]
-            }
-            
-            # 세션 상태 초기화
-            if 'selected_level_group' not in st.session_state:
-                st.session_state.selected_level_group = "초급"
-            if 'selected_level_detail' not in st.session_state:
-                st.session_state.selected_level_detail = "중"
-                
-            # 등급 선택 (초급, 중급, 상급)
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                selected_group = st.radio(
-                    "등급 선택:",
-                    level_groups,
-                    horizontal=True,
-                    key="level_group",
-                    index=level_groups.index(st.session_state.selected_level_group)
-                )
-                st.session_state.selected_level_group = selected_group
-            
-            # 선택된 등급에 따른 세부 난이도 선택 (초, 중, 상)
-            with col2:
-                selected_detail = st.radio(
-                    "세부 난이도:",
-                    level_details[st.session_state.selected_level_group],
-                    horizontal=True,
-                    key="level_detail",
-                    index=level_details[st.session_state.selected_level_group].index(st.session_state.selected_level_detail) if st.session_state.selected_level_detail in level_details[st.session_state.selected_level_group] else 1
-                )
-                st.session_state.selected_level_detail = selected_detail
-            
-            # 최종 선택된 난이도 값
-            final_level = f"{st.session_state.selected_level_group}({st.session_state.selected_level_detail})"
-            
-            # 선택된 난이도 표시
-            st.info(f"현재 선택된 난이도: **{final_level}**")
-            
-            # API 모델 선택
-            api_model = st.radio("사용할 AI 모델:", ["OpenAI GPT", "Gemini"], horizontal=True)
-            
-            if st.button("AI 문제 생성하기"):
-                with st.spinner("AI가 문제를 생성 중입니다..."):
-                    try:
-                        if api_model == "OpenAI GPT" and st.session_state.openai_api_key:
-                            # OpenAI API를 사용하여 문제 생성
-                            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
-                            response = client.chat.completions.create(
-                                model="gpt-3.5-turbo",
-                                messages=[
-                                    {"role": "system", "content": "You are an expert English teacher creating practice problems for Korean students."},
-                                    {"role": "user", "content": f"""
-                                    Create an English writing practice problem on the topic of {ai_topic} at {final_level} level for Korean students.
-                                    
-                                    Return the problem in JSON format with the following fields:
-                                    - question: The writing prompt or question
-                                    - context: Brief context or background for the question
-                                    - example: A sample answer showing what a good response might look like
-                                    
-                                    Make sure the difficulty is appropriate for a {final_level} level Korean student learning English.
-                                    """}
-                                ],
-                                temperature=0.7,
-                            )
-                            
-                            # Parse the response
-                            ai_problem_text = response.choices[0].message.content
-                        
-                        elif api_model == "Gemini" and st.session_state.gemini_api_key:
-                            # 여기에 Gemini API 호출 구현
-                            st.warning("이 데모에서는 Gemini API가 아직 구현되지 않았습니다. 관리자 페이지에서 API 키를 설정할 수 있습니다.")
-                            return
-                        else:
-                            st.error(f"선택한 모델({api_model})의 API 키가 설정되지 않았습니다.")
-                            return
-                        
-                        # Extract JSON from the response
-                        import json
-                        import re
-                        
-                        # Try to extract JSON using regex
-                        json_match = re.search(r'```json\n(.*?)\n```', ai_problem_text, re.DOTALL)
-                        if json_match:
-                            ai_problem_json = json.loads(json_match.group(1))
-                        else:
-                            # If not in code block, try direct parsing
-                            ai_problem_json = json.loads(ai_problem_text)
-                        
-                        # Set as current problem
-                        problem_key = f"AI/{ai_topic}-{final_level}-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-                        st.session_state.current_problem = {
-                            "category": ai_topic,
-                            "question": ai_problem_json.get("question", ""),
-                            "context": ai_problem_json.get("context", ""),
-                            "example": ai_problem_json.get("example", ""),
-                            "level": final_level,
-                            "generated_by": api_model
-                        }
-                        
-                        # Reset feedback if problem changed
-                        reset_feedback_if_problem_changed(problem_key)
-                        
-                        # Success message
-                        st.success("AI가 새로운 문제를 생성했습니다!")
-                        
-                    except Exception as e:
-                        st.error(f"문제 생성 중 오류가 발생했습니다: {e}")
-                        st.info("API 응답 형식이 잘못되었거나 네트워크 오류가 발생했습니다. 다시 시도해주세요.")
-    
-    # 현재 선택된 문제 표시 및 답변 제출 섹션
-    if st.session_state.current_problem:
-        st.markdown("---")
-        st.header("선택된 문제")
-        
-        st.subheader("문제")
-        st.write(st.session_state.current_problem["question"])
-        
-        st.subheader("맥락")
-        st.write(st.session_state.current_problem["context"])
-        
-        if st.session_state.current_problem.get("example"):
-            with st.expander("예시 답안 보기"):
-                st.write(st.session_state.current_problem["example"])
-        
-        st.markdown("---")
-        st.header("나의 답변")
-        
-        # Input method selection
-        input_method = st.radio(
-            "답변 입력 방법을 선택하세요:",
-            ["직접 텍스트 입력", "파일 업로드"],
-            horizontal=True
-        )
-        
-        user_answer = ""
-        
-        if input_method == "직접 텍스트 입력":
-            # User answer input via text area
-            user_answer = st.text_area(
-                "답변을 영어로 작성하세요:",
-                value=st.session_state.user_answer,
-                height=200
-            )
-        elif input_method == "파일 업로드":
-            # File upload for answer
-            uploaded_file = st.file_uploader("답변이 담긴 파일을 업로드하세요 (TXT 파일)", 
-                                            type=["txt"])
-            if uploaded_file is not None:
-                try:
-                    # Read text from the uploaded file
-                    stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
-                    user_answer = stringio.read()
-                    st.write("파일에서 읽은 내용:")
-                    st.write(user_answer)
-                except Exception as e:
-                    st.error(f"파일 읽기 중 오류가 발생했습니다: {e}")
-                    st.info("텍스트(.txt) 파일만 지원됩니다.")
-        
-        # Submit button
-        submit = st.button("첨삭 요청하기")
-        
-        if submit and user_answer:
-            # Check if API key is provided
-            if not st.session_state.openai_api_key:
-                st.error("OpenAI API 키가 설정되지 않았습니다. 관리자에게 문의하세요.")
-            else:
-                st.session_state.user_answer = user_answer
-                
-                with st.spinner("AI가 첨삭 중입니다..."):
-                    try:
-                        # Use the OpenAI API key
-                        client = openai.OpenAI(api_key=st.session_state.openai_api_key)
-                        response = client.chat.completions.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "You are a helpful assistant."},
-                                {"role": "user", "content": get_correction_prompt(st.session_state.current_problem, user_answer)}
-                            ],
-                            temperature=0.7,
-                        )
-                        
-                        # Store the feedback
-                        st.session_state.feedback = response.choices[0].message.content
-                        
-                        # 학생 기록 업데이트
-                        now = datetime.datetime.now().isoformat()
-                        problem_info = {
-                            "timestamp": now,
-                            "problem": st.session_state.current_problem,
-                            "answer": user_answer,
-                            "feedback": st.session_state.feedback
-                        }
-                        
-                        if st.session_state.username in st.session_state.student_records:
-                            st.session_state.student_records[st.session_state.username]["solved_problems"].append(problem_info)
-                            st.session_state.student_records[st.session_state.username]["total_problems"] += 1
-                            st.session_state.student_records[st.session_state.username]["feedback_history"].append({
-                                "timestamp": now,
-                                "problem_category": st.session_state.current_problem.get("category", "기타"),
-                                "problem_question": st.session_state.current_problem.get("question", "")[:50] + "..."
-                            })
-                            save_users_data()
-                        
-                    except Exception as e:
-                        st.error(f"API 호출 중 오류가 발생했습니다: {e}")
-        
-        # Display feedback if available
-        if st.session_state.feedback:
-            st.markdown("---")
-            st.header("AI 첨삭 결과")
-            st.markdown(st.session_state.feedback)
-            
-            # Add button to save feedback
-            if st.button("결과 저장하기"):
-                try:
-                    # 타임스탬프를 포함한 파일명 생성
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"{st.session_state.username}_feedback_{timestamp}.txt"
-                    filepath = os.path.join(st.session_state.save_dir, filename)
-                    
-                    with open(filepath, "w", encoding="utf-8") as f:
-                        f.write(f"학생: {st.session_state.users[st.session_state.username]['name']}\n\n")
-                        f.write(f"문제: {st.session_state.current_problem['question']}\n\n")
-                        f.write(f"맥락: {st.session_state.current_problem['context']}\n\n")
-                        f.write(f"나의 답변: {st.session_state.user_answer}\n\n")
-                        f.write(f"AI 첨삭:\n{st.session_state.feedback}")
-                    
-                    st.success(f"첨삭 결과가 다음 파일로 저장되었습니다: {filepath}")
-                except Exception as e:
-                    st.error(f"파일 저장 중 오류가 발생했습니다: {e}")
+            st.info("선택한 카테고리에 문제가 없습니다.")
+    else:
+        st.info("아직 등록된 문제가 없습니다. 선생님께 문의해주세요.")
 
 def student_learning_history():
     st.header("내 학습 기록")
@@ -752,8 +480,6 @@ def generate_ai_problems(topic, level, num_problems, api_model):
         
         elif api_model == "Gemini" and st.session_state.gemini_api_key:
             # Gemini API를 사용하여 문제 생성
-            import google.generativeai as genai
-            genai.configure(api_key=st.session_state.gemini_api_key)
             model = genai.GenerativeModel('gemini-pro')
             prompt = f"""
             Create {num_problems} English practice problems on the topic of {topic} at {level} level.
@@ -767,7 +493,10 @@ def generate_ai_problems(topic, level, num_problems, api_model):
             raise ValueError("선택한 AI 모델의 API 키가 설정되지 않았습니다.")
     
     except Exception as e:
-        st.error(f"문제 생성 중 오류가 발생했습니다: {str(e)}")
+        if "google.generativeai" in str(e):
+            st.error("Gemini API 모듈을 설치해주세요: pip install google-generativeai")
+        else:
+            st.error(f"문제 생성 중 오류가 발생했습니다: {str(e)}")
         return None
 
 def teacher_problem_management():
