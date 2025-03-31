@@ -1,4 +1,757 @@
-import streamlit as st
+gemini_key_set = bool(st.session_state.gemini_api_key)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("OpenAI API 키")
+        st.write("상태:", "설정됨 ✅" if openai_key_set else "설정되지 않음 ❌")
+        
+        with st.form("openai_api_form"):
+            openai_key = st.text_input("OpenAI API 키 입력:", 
+                                      value=st.session_state.openai_api_key,
+                                      type="password")
+            
+            save_openai_key = st.form_submit_button("저장")
+            
+            if save_openai_key:
+                # API 키 유효성 검사 (간단한 형식 검사)
+                if openai_key and len(openai_key.strip()) > 30:
+                    st.session_state.openai_api_key = openai_key.strip()
+                    
+                    # 환경 변수 파일에 저장
+                    try:
+                        with open(".env", "w") as f:
+                            f.write(f"OPENAI_API_KEY={openai_key.strip()}\n")
+                            if gemini_key_set:
+                                f.write(f"GEMINI_API_KEY={st.session_state.gemini_api_key}\n")
+                        st.success("OpenAI API 키가 저장되었습니다.")
+                    except Exception as e:
+                        st.error(f"API 키 저장 중 오류 발생: {e}")
+                else:
+                    st.error("유효한 API 키를 입력해주세요.")
+    
+    with col2:
+        st.subheader("Gemini API 키")
+        st.write("상태:", "설정됨 ✅" if gemini_key_set else "설정되지 않음 ❌")
+        
+        with st.form("gemini_api_form"):
+            gemini_key = st.text_input("Gemini API 키 입력:", 
+                                      value=st.session_state.gemini_api_key,
+                                      type="password")
+            
+            save_gemini_key = st.form_submit_button("저장")
+            
+            if save_gemini_key:
+                # API 키 유효성 검사 (간단한 형식 검사)
+                if gemini_key and len(gemini_key.strip()) > 10:
+                    st.session_state.gemini_api_key = gemini_key.strip()
+                    
+                    # 환경 변수 파일에 저장
+                    try:
+                        with open(".env", "w") as f:
+                            if openai_key_set:
+                                f.write(f"OPENAI_API_KEY={st.session_state.openai_api_key}\n")
+                            f.write(f"GEMINI_API_KEY={gemini_key.strip()}\n")
+                        st.success("Gemini API 키가 저장되었습니다.")
+                    except Exception as e:
+                        st.error(f"API 키 저장 중 오류 발생: {e}")
+                else:
+                    st.error("유효한 API 키를 입력해주세요.")
+    
+    # API 테스트 기능
+    st.subheader("API 테스트")
+    
+    test_option = st.radio("테스트할 API 선택:", ["OpenAI", "Gemini"], horizontal=True)
+    test_button = st.button("API 연결 테스트")
+    
+    if test_button:
+        if test_option == "OpenAI":
+            if not st.session_state.openai_api_key:
+                st.error("OpenAI API 키가 설정되어 있지 않습니다.")
+            else:
+                with st.spinner("OpenAI API 연결 테스트 중..."):
+                    try:
+                        client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+                        response = client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "You are a helpful assistant."},
+                                {"role": "user", "content": "Say 'Connection successful' in Korean."}
+                            ],
+                            temperature=0.7,
+                        )
+                        st.success(f"API 연결 성공! 응답: {response.choices[0].message.content}")
+                    except Exception as e:
+                        st.error(f"API 연결 테스트 중 오류 발생: {e}")
+        elif test_option == "Gemini":
+            if not st.session_state.gemini_api_key:
+                st.error("Gemini API 키가 설정되어 있지 않습니다.")
+            else:
+                with st.spinner("Gemini API 연결 테스트 중..."):
+                    st.warning("Gemini API 연동이 아직 구현되지 않았습니다.")
+
+# 관리자 사용자 관리 페이지
+def admin_user_management():
+    st.header("사용자 관리")
+    
+    tab1, tab2, tab3 = st.tabs(["학생", "교사", "관리자"])
+    
+    with tab1:
+        st.subheader("학생 관리")
+        
+        # 학생 목록 표시
+        if not st.session_state.students:
+            st.info("등록된 학생이 없습니다.")
+        else:
+            st.write(f"총 {len(st.session_state.students)}명의 학생이 등록되어 있습니다.")
+            
+            student_data = []
+            for username in st.session_state.students:
+                # 학생의 첨삭 기록 수 계산
+                record_count = len(st.session_state.student_records.get(username, []))
+                last_activity = "활동 없음"
+                
+                if username in st.session_state.student_records and st.session_state.student_records[username]:
+                    # 마지막 활동 시간
+                    last_activity = st.session_state.student_records[username][-1]["timestamp"]
+                
+                student_data.append({
+                    "사용자명": username,
+                    "첨삭 기록 수": record_count,
+                    "마지막 활동": last_activity
+                })
+            
+            # 데이터프레임으로 변환하여 표시
+            student_df = pd.DataFrame(student_data)
+            st.dataframe(student_df)
+        
+        # 새 학생 등록
+        st.subheader("새 학생 등록")
+        with st.form("admin_add_student"):
+            new_student = st.text_input("학생 사용자명")
+            new_password = st.text_input("비밀번호", type="password")
+            
+            add_student = st.form_submit_button("학생 등록")
+            
+            if add_student:
+                if not new_student or not new_password:
+                    st.error("사용자명과 비밀번호를 모두 입력해주세요.")
+                elif new_student in st.session_state.students:
+                    st.error("이미 존재하는 사용자명입니다.")
+                else:
+                    st.session_state.students[new_student] = hash_password(new_password)
+                    users = load_users()
+                    users['students'] = st.session_state.students
+                    save_users(users)
+                    st.success(f"학생 {new_student}이(가) 등록되었습니다.")
+                    st.rerun()
+        
+        # 학생 제거
+        st.subheader("학생 제거")
+        with st.form("admin_remove_student"):
+            student_to_remove = st.selectbox("제거할 학생 선택:", 
+                                           ["선택하세요..."] + list(st.session_state.students.keys()))
+            
+            remove_student = st.form_submit_button("학생 제거")
+            
+            if remove_student and student_to_remove != "선택하세요...":
+                # 학생 제거
+                del st.session_state.students[student_to_remove]
+                users = load_users()
+                users['students'] = st.session_state.students
+                save_users(users)
+                
+                # 학생 기록도 함께 제거 (선택 사항)
+                if student_to_remove in st.session_state.student_records:
+                    del st.session_state.student_records[student_to_remove]
+                    save_student_records(st.session_state.student_records)
+                
+                st.success(f"학생 {student_to_remove}이(가) 제거되었습니다.")
+                st.rerun()
+    
+    with tab2:
+        st.subheader("교사 관리")
+        
+        # 교사 목록 표시
+        if not st.session_state.teachers:
+            st.info("등록된 교사가 없습니다.")
+        else:
+            st.write(f"총 {len(st.session_state.teachers)}명의 교사가 등록되어 있습니다.")
+            
+            teacher_data = []
+            for username in st.session_state.teachers:
+                # 교사가 출제한 문제 수 계산
+                problem_count = sum(1 for p in st.session_state.teacher_problems.values() 
+                                  if p.get("teacher") == username)
+                
+                teacher_data.append({
+                    "사용자명": username,
+                    "출제 문제 수": problem_count
+                })
+            
+            # 데이터프레임으로 변환하여 표시
+            teacher_df = pd.DataFrame(teacher_data)
+            st.dataframe(teacher_df)
+        
+        # 새 교사 등록
+        st.subheader("새 교사 등록")
+        with st.form("admin_add_teacher"):
+            new_teacher = st.text_input("교사 사용자명")
+            new_password = st.text_input("비밀번호", type="password")
+            
+            add_teacher = st.form_submit_button("교사 등록")
+            
+            if add_teacher:
+                if not new_teacher or not new_password:
+                    st.error("사용자명과 비밀번호를 모두 입력해주세요.")
+                elif new_teacher in st.session_state.teachers:
+                    st.error("이미 존재하는 사용자명입니다.")
+                else:
+                    st.session_state.teachers[new_teacher] = hash_password(new_password)
+                    users = load_users()
+                    users['teachers'] = st.session_state.teachers
+                    save_users(users)
+                    st.success(f"교사 {new_teacher}이(가) 등록되었습니다.")
+                    st.rerun()
+        
+        # 교사 제거
+        st.subheader("교사 제거")
+        with st.form("admin_remove_teacher"):
+            teacher_to_remove = st.selectbox("제거할 교사 선택:", 
+                                           ["선택하세요..."] + list(st.session_state.teachers.keys()))
+            
+            remove_teacher = st.form_submit_button("교사 제거")
+            
+            if remove_teacher and teacher_to_remove != "선택하세요...":
+                # 교사 제거
+                del st.session_state.teachers[teacher_to_remove]
+                users = load_users()
+                users['teachers'] = st.session_state.teachers
+                save_users(users)
+                
+                st.success(f"교사 {teacher_to_remove}이(가) 제거되었습니다.")
+                st.rerun()
+    
+    with tab3:
+        st.subheader("관리자 관리")
+        
+        # 관리자 목록 표시
+        st.write(f"총 {len(st.session_state.admins)}명의 관리자가 등록되어 있습니다.")
+        
+        admin_usernames = list(st.session_state.admins.keys())
+        st.write("관리자 목록:")
+        for admin in admin_usernames:
+            st.write(f"- {admin}")
+        
+        # 새 관리자 등록
+        st.subheader("새 관리자 등록")
+        with st.form("add_admin"):
+            new_admin = st.text_input("관리자 사용자명")
+            new_password = st.text_input("비밀번호", type="password")
+            
+            add_admin = st.form_submit_button("관리자 등록")
+            
+            if add_admin:
+                if not new_admin or not new_password:
+                    st.error("사용자명과 비밀번호를 모두 입력해주세요.")
+                elif new_admin in st.session_state.admins:
+                    st.error("이미 존재하는 사용자명입니다.")
+                else:
+                    st.session_state.admins[new_admin] = hash_password(new_password)
+                    users = load_users()
+                    users['admins'] = st.session_state.admins
+                    save_users(users)
+                    st.success(f"관리자 {new_admin}이(가) 등록되었습니다.")
+                    st.rerun()
+        
+        # 관리자 제거 (기본 관리자 제외)
+        st.subheader("관리자 제거")
+        
+        removable_admins = [admin for admin in admin_usernames if admin != "admin"]
+        
+        if not removable_admins:
+            st.info("제거 가능한 관리자가 없습니다.")
+        else:
+            with st.form("remove_admin"):
+                admin_to_remove = st.selectbox("제거할 관리자 선택:", 
+                                             ["선택하세요..."] + removable_admins)
+                
+                remove_admin = st.form_submit_button("관리자 제거")
+                
+                if remove_admin and admin_to_remove != "선택하세요...":
+                    # 관리자 제거
+                    del st.session_state.admins[admin_to_remove]
+                    users = load_users()
+                    users['admins'] = st.session_state.admins
+                    save_users(users)
+                    
+                    st.success(f"관리자 {admin_to_remove}이(가) 제거되었습니다.")
+                    st.rerun()
+
+# 관리자 데이터 백업/복원 페이지
+def admin_backup_page():
+    st.header("데이터 백업 및 복원")
+    
+    tab1, tab2 = st.tabs(["백업", "복원"])
+    
+    with tab1:
+        st.subheader("데이터 백업")
+        
+        # 백업할 데이터 유형 선택
+        backup_options = st.multiselect(
+            "백업할 데이터 선택:",
+            ["사용자 계정", "학생 기록", "교사 출제 문제"],
+            default=["사용자 계정", "학생 기록", "교사 출제 문제"]
+        )
+        
+        if st.button("백업 생성"):
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = "backups"
+            
+            # 백업 디렉토리 생성
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+            
+            backup_files = []
+            
+            # 데이터 백업
+            if "사용자 계정" in backup_options:
+                filename = os.path.join(backup_dir, f"users_{timestamp}.json")
+                users = {
+                    'students': st.session_state.students,
+                    'teachers': st.session_state.teachers,
+                    'admins': st.session_state.admins
+                }
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(users, f, ensure_ascii=False, indent=4)
+                backup_files.append(filename)
+            
+            if "학생 기록" in backup_options:
+                filename = os.path.join(backup_dir, f"student_records_{timestamp}.json")
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(st.session_state.student_records, f, ensure_ascii=False, indent=4)
+                backup_files.append(filename)
+            
+            if "교사 출제 문제" in backup_options:
+                filename = os.path.join(backup_dir, f"teacher_problems_{timestamp}.json")
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(st.session_state.teacher_problems, f, ensure_ascii=False, indent=4)
+                backup_files.append(filename)
+            
+            if backup_files:
+                st.success(f"백업이 성공적으로 생성되었습니다: {', '.join(backup_files)}")
+            else:
+                st.warning("백업할 데이터를 선택해주세요.")
+        
+        # 기존 백업 파일 목록
+        st.subheader("기존 백업 파일")
+        
+        backup_dir = "backups"
+        if os.path.exists(backup_dir):
+            backup_files = os.listdir(backup_dir)
+            if backup_files:
+                for file in sorted(backup_files, reverse=True):
+                    file_path = os.path.join(backup_dir, file)
+                    file_size = os.path.getsize(file_path) / 1024  # KB
+                    file_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
+                    
+                    st.write(f"**{file}** - {file_size:.2f} KB, 생성일: {file_time}")
+                    
+                    col1, col2 = st.columns([1, 4])
+                    with col1:
+                        if st.button("다운로드", key=f"download_{file}"):
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                file_content = f.read()
+                            
+                            st.download_button(
+                                label="파일 다운로드",
+                                data=file_content,
+                                file_name=file,
+                                mime="application/json",
+                                key=f"download_button_{file}"
+                            )
+                    with col2:
+                        if st.button("삭제", key=f"delete_{file}"):
+                            os.remove(file_path)
+                            st.success(f"파일 {file}이(가) 삭제되었습니다.")
+                            st.rerun()
+            else:
+                st.info("백업 파일이 없습니다.")
+        else:
+            st.info("백업 디렉토리가 존재하지 않습니다.")
+    
+    with tab2:
+        st.subheader("데이터 복원")
+        
+        upload_type = st.radio("복원 방법 선택:", ["파일 업로드", "기존 백업에서 복원"], horizontal=True)
+        
+        if upload_type == "파일 업로드":
+            uploaded_file = st.file_uploader("백업 파일 업로드", type=["json"])
+            
+            if uploaded_file is not None:
+                try:
+                    # 파일 콘텐츠 읽기
+                    content = uploaded_file.getvalue().decode("utf-8")
+                    data = json.loads(content)
+                    
+                    # 파일 유형 감지
+                    if 'students' in data and 'teachers' in data and 'admins' in data:
+                        file_type = "사용자 계정"
+                    elif all(isinstance(val, list) for val in data.values()):
+                        file_type = "학생 기록"
+                    else:
+                        file_type = "교사 출제 문제"
+                    
+                    st.success(f"파일이 업로드되었습니다. 파일 유형: {file_type}")
+                    
+                    if st.button("이 데이터로 복원"):
+                        if file_type == "사용자 계정":
+                            st.session_state.students = data.get('students', {})
+                            st.session_state.teachers = data.get('teachers', {})
+                            st.session_state.admins = data.get('admins', {})
+                            
+                            # 기본 관리자 계정 보존
+                            if 'admin' not in st.session_state.admins:
+                                st.session_state.admins['admin'] = hash_password('admin123')
+                            
+                            save_users(data)
+                        elif file_type == "학생 기록":
+                            st.session_state.student_records = data
+                            save_student_records(data)
+                        elif file_type == "교사 출제 문제":
+                            st.session_state.teacher_problems = data
+                            save_teacher_problems(data)
+                        
+                        st.success("데이터가 성공적으로 복원되었습니다.")
+                        st.rerun()
+                
+                except Exception as e:
+                    st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
+        
+        else:  # 기존 백업에서 복원
+            backup_dir = "backups"
+            if os.path.exists(backup_dir):
+                backup_files = os.listdir(backup_dir)
+                if backup_files:
+                    selected_file = st.selectbox("복원할 백업 파일 선택:", sorted(backup_files, reverse=True))
+                    
+                    if selected_file:
+                        file_path = os.path.join(backup_dir, selected_file)
+                        
+                        # 파일 유형 감지
+                        if "users" in selected_file:
+                            file_type = "사용자 계정"
+                        elif "student_records" in selected_file:
+                            file_type = "학생 기록"
+                        elif "teacher_problems" in selected_file:
+                            file_type = "교사 출제 문제"
+                        else:
+                            file_type = "알 수 없음"
+                        
+                        st.write(f"선택된 파일: **{selected_file}** (유형: {file_type})")
+                        
+                        if st.button("이 백업에서 복원"):
+                            try:
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    data = json.load(f)
+                                
+                                if file_type == "사용자 계정":
+                                    st.session_state.students = data.get('students', {})
+                                    st.session_state.teachers = data.get('teachers', {})
+                                    st.session_state.admins = data.get('admins', {})
+                                    
+                                    # 기본 관리자 계정 보존
+                                    if 'admin' not in st.session_state.admins:
+                                        st.session_state.admins['admin'] = hash_password('admin123')
+                                    
+                                    save_users(data)
+                                elif file_type == "학생 기록":
+                                    st.session_state.student_records = data
+                                    save_student_records(data)
+                                elif file_type == "교사 출제 문제":
+                                    st.session_state.teacher_problems = data
+                                    save_teacher_problems(data)
+                                
+                                st.success("데이터가 성공적으로 복원되었습니다.")
+                                st.rerun()
+                            
+                            except Exception as e:
+                                st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
+                else:
+                    st.info("백업 파일이 없습니다.")
+            else:
+                st.info("백업 디렉토리가 존재하지 않습니다.")
+
+# 관리자 시스템 정보 페이지
+def admin_system_info():
+    st.header("시스템 정보")
+    
+    # 통계 요약
+    st.subheader("통계 요약")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("학생 수", len(st.session_state.students))
+    with col2:
+        st.metric("교사 수", len(st.session_state.teachers))
+    with col3:
+        st.metric("관리자 수", len(st.session_state.admins))
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("문제 수", len(st.session_state.teacher_problems) + len(SAMPLE_PROBLEMS))
+    with col2:
+        st.metric("교사 출제 문제 수", len(st.session_state.teacher_problems))
+    with col3:
+        total_records = sum(len(records) for records in st.session_state.student_records.values())
+        st.metric("총 학습 기록 수", total_records)
+    
+    # 일일 활동 그래프
+    if st.session_state.student_records:
+        st.subheader("일일 학습 활동")
+        
+        # 모든 학생의 학습 기록 합치기
+        all_records = []
+        for student, records in st.session_state.student_records.items():
+            for record in records:
+                try:
+                    date = datetime.datetime.strptime(record["timestamp"], "%Y-%m-%d %H:%M:%S").date()
+                    all_records.append({"date": date, "student": student})
+                except:
+                    pass
+        
+        if all_records:
+            # 날짜별 학습 수 계산
+            date_counts = {}
+            for record in all_records:
+                date_str = record["date"].strftime("%Y-%m-%d")
+                if date_str in date_counts:
+                    date_counts[date_str] += 1
+                else:
+                    date_counts[date_str] = 1
+            
+            # 최근 30일 데이터만 표시
+            today = datetime.datetime.now().date()
+            dates = [(today - datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(30)]
+            dates.reverse()  # 오름차순 정렬
+            
+            counts = [date_counts.get(date, 0) for date in dates]
+            
+            # 차트 데이터 생성
+            chart_data = pd.DataFrame({
+                '날짜': dates,
+                '학습 수': counts
+            })
+            
+            # 차트 표시
+            st.bar_chart(chart_data.set_index('날짜'))
+        else:
+            st.info("학습 활동 기록이 없습니다.")
+    else:
+        st.info("학습 기록이 없습니다.")
+    
+    # 시스템 정보
+    st.subheader("앱 정보")
+    st.write("**앱 버전:** 2.0.0")
+    st.write("**마지막 업데이트:** 2025년 3월 31일")
+    st.write("**프레임워크:** Streamlit")
+    st.write("**AI 엔진:** OpenAI API, Gemini API")
+    
+    # 사용자 및 데이터 관리 옵션
+    st.subheader("데이터 관리")
+    
+    if st.button("모든 데이터 초기화", help="주의: 이 작업은 되돌릴 수 없습니다."):
+        confirm = st.checkbox("정말로 모든 데이터를 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.", key="confirm_reset")
+        
+        if confirm and st.button("데이터 초기화 확인"):
+            # 데이터 백업 생성
+            backup_dir = "backups"
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+            
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 사용자 백업
+            users = {
+                'students': st.session_state.students,
+                'teachers': st.session_state.teachers,
+                'admins': st.session_state.admins
+            }
+            with open(os.path.join(backup_dir, f"users_before_reset_{timestamp}.json"), 'w', encoding='utf-8') as f:
+                json.dump(users, f, ensure_ascii=False, indent=4)
+            
+            # 학생 기록 백업
+            with open(os.path.join(backup_dir, f"student_records_before_reset_{timestamp}.json"), 'w', encoding='utf-8') as f:
+                json.dump(st.session_state.student_records, f, ensure_ascii=False, indent=4)
+            
+            # 교사 문제 백업
+            with open(os.path.join(backup_dir, f"teacher_problems_before_reset_{timestamp}.json"), 'w', encoding='utf-8') as f:
+                json.dump(st.session_state.teacher_problems, f, ensure_ascii=False, indent=4)
+            
+            # 데이터 초기화
+            st.session_state.students = {}
+            st.session_state.teachers = {}
+            st.session_state.admins = {'admin': hash_password('admin123')}  # 기본 관리자 계정 유지
+            st.session_state.student_records = {}
+            st.session_state.teacher_problems = {}
+            
+            # 파일에 저장
+            save_users({
+                'students': {},
+                'teachers': {},
+                'admins': {'admin': hash_password('admin123')}
+            })
+            save_student_records({})
+            save_teacher_problems({})
+            
+            st.success("모든 데이터가 초기화되었습니다. 백업이 'backups' 폴더에 저장되었습니다.")
+
+# 메인 애플리케이션 로직
+def main():
+    # 로그인 상태에 따라 적절한 페이지 표시
+    if not st.session_state.logged_in:
+        login_page()
+    else:
+        # 역할에 따라 적절한 대시보드 표시
+        if st.session_state.user_role == "student":
+            student_dashboard()
+        elif st.session_state.user_role == "teacher":
+            teacher_dashboard()
+        elif st.session_state.user_role == "admin":
+            admin_dashboard()
+        else:
+            st.error("알 수 없는 사용자 역할입니다.")
+            st.session_state.logged_in = False
+            st.rerun()
+
+if __name__ == "__main__":
+    main()# 교사 채점 및 첨삭 페이지
+def teacher_grading_page():
+    st.header("채점 및 첨삭")
+    
+    # 학생 선택
+    students_with_records = [username for username in st.session_state.students 
+                            if username in st.session_state.student_records 
+                            and st.session_state.student_records[username]]
+    
+    if not students_with_records:
+        st.info("학습 기록이 있는 학생이 없습니다.")
+        return
+        
+    selected_student = st.selectbox("학생 선택:", ["선택하세요..."] + students_with_records)
+    
+    if selected_student != "선택하세요...":
+        # 학생의 학습 기록 표시
+        records = st.session_state.student_records[selected_student]
+        
+        if not records:
+            st.info(f"{selected_student}의 학습 기록이 없습니다.")
+            return
+        
+        # 학습 기록 선택
+        record_descriptions = [f"{i+1}. {r['timestamp']} - {r['problem']['question'][:30]}..." 
+                              for i, r in enumerate(records)]
+        
+        selected_record_idx = st.selectbox("채점할 기록 선택:", 
+                                         range(len(record_descriptions)), 
+                                         format_func=lambda i: record_descriptions[i])
+        
+        selected_record = records[selected_record_idx]
+        
+        # 선택된 기록 표시
+        st.subheader("문제 정보")
+        st.write("**문제:**", selected_record['problem']['question'])
+        st.write("**맥락:**", selected_record['problem']['context'])
+        
+        st.subheader("학생 답변")
+        st.write(selected_record['answer'])
+        
+        st.subheader("AI 첨삭")
+        st.markdown(selected_record['feedback'])
+        
+        # 교사 점수 및 코멘트 입력
+        st.subheader("교사 채점")
+        
+        # 이미 채점이 되어 있는지 확인
+        if "teacher_score" in selected_record and "teacher_comment" in selected_record:
+            current_score = selected_record["teacher_score"]
+            current_comment = selected_record["teacher_comment"]
+        else:
+            current_score = 0
+            current_comment = ""
+        
+        with st.form("teacher_grading_form"):
+            score = st.slider("점수 (0-100)", 0, 100, current_score)
+            comment = st.text_area("코멘트", value=current_comment, height=150)
+            
+            submit_grade = st.form_submit_button("채점 제출")
+            
+            if submit_grade:
+                # 기록에 교사 채점 정보 추가
+                selected_record["teacher_score"] = score
+                selected_record["teacher_comment"] = comment
+                selected_record["graded_by"] = st.session_state.username
+                selected_record["graded_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # 기록 저장
+                save_student_records(st.session_state.student_records)
+                st.success("채점이 성공적으로 저장되었습니다.")
+                st.rerun()
+
+# 교사 프로필 페이지
+def teacher_profile_page():
+    st.header("프로필 설정")
+    
+    # 비밀번호 변경
+    st.subheader("비밀번호 변경")
+    with st.form("teacher_change_password_form"):
+        current_password = st.text_input("현재 비밀번호", type="password")
+        new_password = st.text_input("새 비밀번호", type="password")
+        confirm_password = st.text_input("새 비밀번호 확인", type="password")
+        change_password_button = st.form_submit_button("비밀번호 변경")
+        
+        if change_password_button:
+            if not verify_password(st.session_state.teachers[st.session_state.username], current_password):
+                st.error("현재 비밀번호가 일치하지 않습니다.")
+            elif new_password != confirm_password:
+                st.error("새 비밀번호가 일치하지 않습니다.")
+            else:
+                st.session_state.teachers[st.session_state.username] = hash_password(new_password)
+                users = load_users()
+                users['teachers'] = st.session_state.teachers
+                save_users(users)
+                st.success("비밀번호가 성공적으로 변경되었습니다.")
+
+# 관리자 대시보드
+def admin_dashboard():
+    st.title(f"관리자 대시보드 - {st.session_state.username}님 환영합니다!")
+    
+    # 사이드바 내비게이션
+    st.sidebar.title("관리자 메뉴")
+    page = st.sidebar.radio("페이지 선택", ["API 키 설정", "사용자 관리", "데이터 백업/복원", "시스템 정보"])
+    
+    if page == "API 키 설정":
+        admin_api_page()
+    elif page == "사용자 관리":
+        admin_user_management()
+    elif page == "데이터 백업/복원":
+        admin_backup_page()
+    elif page == "시스템 정보":
+        admin_system_info()
+    
+    logout_button = st.sidebar.button("로그아웃")
+    if logout_button:
+        st.session_state.logged_in = False
+        st.session_state.user_role = None
+        st.session_state.username = ""
+        st.rerun()
+
+# 관리자 API 키 설정 페이지
+def admin_api_page():
+    st.header("API 키 설정")
+    
+    # 현재 API 키 상태 표시
+    openai_key_set = bool(st.session_state.openai_api_key)
+    gemini_key_set = bool(stimport streamlit as st
 import os
 import openai
 import pandas as pd
@@ -12,8 +765,6 @@ import altair as alt
 from dotenv import load_dotenv
 from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
-
-# matplotlib 제거 - Streamlit의 내장 차트 기능만 사용
 
 # 환경 변수 로드
 load_dotenv()
