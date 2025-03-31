@@ -1610,14 +1610,14 @@ def admin_user_management():
         st.subheader("등록된 사용자 목록")
         
         # 표로 보여주기
-        user_data = []
+        user_data_list = []
         for username, user_data_item in st.session_state.users.items():
             try:
                 created_at = datetime.datetime.fromisoformat(user_data_item.get("created_at", "")).strftime("%Y-%m-%d")
             except:
                 created_at = user_data_item.get("created_at", "")
             
-            user_data.append({
+            user_data_list.append({
                 "아이디": username,
                 "이름": user_data_item.get("name", ""),
                 "이메일": user_data_item.get("email", ""),
@@ -1626,8 +1626,8 @@ def admin_user_management():
                 "등록자": user_data_item.get("created_by", "")
             })
         
-        if user_data:
-            df = pd.DataFrame(user_data)
+        if user_data_list:
+            df = pd.DataFrame(user_data_list)
             st.dataframe(df, use_container_width=True)
         else:
             st.info("등록된 사용자가 없습니다.")
@@ -1780,3 +1780,172 @@ def admin_backup_restore():
                         save_users_data()
                         st.success("데이터가 성공적으로 복원되었습니다.")
                         st.info("변경 사항을 적용하려면 앱을 새로고침하세요.")
+            except Exception as e:
+                st.error(f"백업 파일 처리 중 오류가 발생했습니다: {e}")
+
+def admin_system_info():
+    st.header("시스템 정보")
+    
+    st.subheader("앱 정보")
+    st.write("**앱 이름:** AI 영어 첨삭 앱")
+    st.write("**버전:** 1.0.0")
+    
+    st.subheader("사용 통계")
+    
+    # 사용자 통계
+    st.write(f"**총 사용자 수:** {len(st.session_state.users)}")
+    
+    # 역할별 사용자 수
+    role_counts = {"student": 0, "teacher": 0, "admin": 0}
+    for user in st.session_state.users.values():
+        role = user.get("role", "")
+        if role in role_counts:
+            role_counts[role] += 1
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("학생 수", role_counts["student"])
+    
+    with col2:
+        st.metric("교사 수", role_counts["teacher"])
+    
+    with col3:
+        st.metric("관리자 수", role_counts["admin"])
+    
+    # 문제 통계
+    st.subheader("문제 통계")
+    
+    total_sample_problems = len(SAMPLE_PROBLEMS)
+    total_teacher_problems = len(st.session_state.teacher_problems)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric("예제 문제 수", total_sample_problems)
+    
+    with col2:
+        st.metric("교사 출제 문제 수", total_teacher_problems)
+    
+    # 카테고리별 문제 분포
+    categories = {}
+    
+    # 예제 문제 카테고리
+    for problem in SAMPLE_PROBLEMS.values():
+        category = problem.get("category", "기타")
+        if category in categories:
+            categories[category] += 1
+        else:
+            categories[category] = 1
+    
+    # 교사 출제 문제 카테고리
+    for problem in st.session_state.teacher_problems.values():
+        category = problem.get("category", "기타")
+        if category in categories:
+            categories[category] += 1
+        else:
+            categories[category] = 1
+    
+    if categories:
+        st.subheader("카테고리별 문제 분포")
+        
+        df = pd.DataFrame({
+            "카테고리": list(categories.keys()),
+            "문제 수": list(categories.values())
+        })
+        
+        chart = alt.Chart(df).mark_bar().encode(
+            x="문제 수:Q",
+            y=alt.Y("카테고리:N", sort="-x"),
+            color=alt.Color("카테고리:N", legend=None),
+            tooltip=["카테고리", "문제 수"]
+        ).properties(
+            title="카테고리별 문제 분포"
+        )
+        
+        st.altair_chart(chart, use_container_width=True)
+    
+    # 학습 통계
+    st.subheader("학습 통계")
+    
+    total_solved = 0
+    for student_data in st.session_state.student_records.values():
+        total_solved += student_data.get("total_problems", 0)
+    
+    st.metric("총 학습 문제 수", total_solved)
+    
+    # 최근 활동
+    st.subheader("최근 활동")
+    
+    recent_activities = []
+    
+    # 최근 등록된 사용자
+    for username, user_data in st.session_state.users.items():
+        if "created_at" in user_data:
+            try:
+                created_at = datetime.datetime.fromisoformat(user_data["created_at"])
+                recent_activities.append({
+                    "timestamp": created_at,
+                    "activity": f"새 사용자 등록: {username} ({user_data.get('name', '')})",
+                    "type": "user_registration"
+                })
+            except:
+                pass
+    
+    # 최근 출제된 문제
+    for problem_key, problem in st.session_state.teacher_problems.items():
+        if "created_at" in problem:
+            try:
+                created_at = datetime.datetime.fromisoformat(problem["created_at"])
+                recent_activities.append({
+                    "timestamp": created_at,
+                    "activity": f"새 문제 출제: {problem_key}",
+                    "type": "problem_creation"
+                })
+            except:
+                pass
+    
+    # 최근 학습 기록
+    for student_id, student_data in st.session_state.student_records.items():
+        for problem in student_data.get("solved_problems", []):
+            if "timestamp" in problem:
+                try:
+                    timestamp = datetime.datetime.fromisoformat(problem["timestamp"])
+                    student_name = st.session_state.users.get(student_id, {}).get("name", student_id)
+                    recent_activities.append({
+                        "timestamp": timestamp,
+                        "activity": f"학습 완료: {student_name} - {problem['problem']['question'][:30]}...",
+                        "type": "problem_solving"
+                    })
+                except:
+                    pass
+    
+    # 최근 순으로 정렬 및 최근 10개만 표시
+    recent_activities = sorted(recent_activities, key=lambda x: x["timestamp"], reverse=True)[:10]
+    
+    if recent_activities:
+        for activity in recent_activities:
+            st.write(f"**{activity['timestamp'].strftime('%Y-%m-%d %H:%M')}** - {activity['activity']}")
+    else:
+        st.info("최근 활동 기록이 없습니다.")
+
+# Main app function
+def main():
+    # 로그인 확인
+    if not st.session_state.logged_in:
+        login_page()
+    else:
+        # 역할에 따른 대시보드 표시
+        if st.session_state.user_role == "student":
+            student_dashboard()
+        elif st.session_state.user_role == "teacher":
+            teacher_dashboard()
+        elif st.session_state.user_role == "admin":
+            admin_dashboard()
+        else:
+            st.error("알 수 없는 사용자 역할입니다. 관리자에게 문의하세요.")
+            logout_user()
+
+# Run the app
+if __name__ == "__main__":
+    main()
