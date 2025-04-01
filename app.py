@@ -1626,7 +1626,36 @@ def teacher_problem_management():
         st.subheader("CSV로 문제 업로드")
         st.info("CSV 파일로 문제를 일괄 업로드할 수 있습니다. 아래 양식에 맞춰 CSV 파일을 준비해주세요.")
         
-        # CSV 템플릿 다운로드 링크
+        # CSV 샘플 파일 생성 및 다운로드 기능 추가
+        def create_sample_csv():
+            """CSV 샘플 파일 생성"""
+            sample_data = {
+                'school_type': ['중학교', '고등학교'],
+                'grade': ['1학년', '2학년'],
+                'topic': ['일상생활/자기소개', '환경/사회문제'],
+                'difficulty': ['하', '중'],
+                'question_type': ['객관식', '주관식'],
+                'question': ['What is your name?', 'Write about environmental issues.'],
+                'context': ['Basic personal introduction', 'Discussion about climate change'],
+                'options': ['A. My name is John. B. I am from Korea. C. I am 15 years old. D. I live in Seoul.', ''],
+                'answer': ['A', 'Sample answer about environmental issues.'],
+                'explanation': ['This is how to introduce your name in English.', 'This is about writing environmental issues.']
+            }
+            
+            df = pd.DataFrame(sample_data)
+            csv = df.to_csv(index=False)
+            return csv
+        
+        # 샘플 CSV 다운로드 버튼
+        sample_csv = create_sample_csv()
+        st.download_button(
+            label="📥 샘플 CSV 파일 다운로드",
+            data=sample_csv,
+            file_name="sample_csv.csv",
+            mime="text/csv"
+        )
+        
+        # CSV 템플릿 안내
         st.markdown("""
         ### CSV 양식 안내
         아래 형식에 맞춰 CSV 파일을 준비해주세요:
@@ -1648,6 +1677,53 @@ def teacher_problem_management():
         - explanation: 해설
         """)
         
+        # CSV 파일 업로드
+        uploaded_file = st.file_uploader("CSV 파일 업로드", type=["csv"])
+        
+        if uploaded_file is not None:
+            try:
+                df = pd.read_csv(uploaded_file)
+                st.write("업로드된 CSV 파일 미리보기:")
+                st.dataframe(df.head())
+                
+                if st.button("CSV에서 문제 가져오기"):
+                    with st.spinner("CSV 파일에서 문제를 가져오는 중..."):
+                        # 문제 포맷 변환
+                        problem_texts = []
+                        for _, row in df.iterrows():
+                            problem_text = f"[문제]\n"
+                            problem_text += f"유형: {row['question_type']}\n"
+                            problem_text += f"문제: {row['question']}\n"
+                            problem_text += f"맥락: {row['context']}\n"
+                            
+                            if row['question_type'] == '객관식' and row['options']:
+                                problem_text += f"보기:\n{row['options']}\n"
+                            
+                            problem_text += f"정답: {row['answer']}\n"
+                            problem_text += f"해설: {row['explanation']}\n\n"
+                            
+                            # 문제를 개별적으로 저장
+                            success, message = save_generated_problems(
+                                problem_text,
+                                row['school_type'],
+                                row['grade'],
+                                row['topic'],
+                                row['difficulty']
+                            )
+                            
+                            if success:
+                                problem_texts.append(problem_text)
+                            else:
+                                st.error(f"다음 문제 저장 중 오류 발생: {message}")
+                                st.code(problem_text)
+                        
+                        if problem_texts:
+                            st.success(f"{len(problem_texts)}개의 문제가 성공적으로 저장되었습니다.")
+                            st.rerun()
+            
+            except Exception as e:
+                st.error(f"CSV 파일 처리 중 오류가 발생했습니다: {str(e)}")
+
 def save_learning_record(problems, answers, elapsed_time):
     """학생의 학습 기록을 저장하는 함수"""
     try:
