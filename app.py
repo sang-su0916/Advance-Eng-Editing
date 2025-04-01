@@ -1627,26 +1627,6 @@ def teacher_problem_management():
         st.info("CSV 파일로 문제를 일괄 업로드할 수 있습니다. 아래 양식에 맞춰 CSV 파일을 준비해주세요.")
         
         # CSV 샘플 파일 생성 및 다운로드 기능 추가
-        def create_sample_csv():
-            """CSV 샘플 파일 생성"""
-            sample_data = {
-                'school_type': ['중학교', '고등학교'],
-                'grade': ['1학년', '2학년'],
-                'topic': ['일상생활/자기소개', '환경/사회문제'],
-                'difficulty': ['하', '중'],
-                'question_type': ['객관식', '주관식'],
-                'question': ['What is your name?', 'Write about environmental issues.'],
-                'context': ['Basic personal introduction', 'Discussion about climate change'],
-                'options': ['A. My name is John. B. I am from Korea. C. I am 15 years old. D. I live in Seoul.', ''],
-                'answer': ['A', 'Sample answer about environmental issues.'],
-                'explanation': ['This is how to introduce your name in English.', 'This is about writing environmental issues.']
-            }
-            
-            df = pd.DataFrame(sample_data)
-            csv = df.to_csv(index=False)
-            return csv
-        
-        # 샘플 CSV 다운로드 버튼
         sample_csv = create_sample_csv()
         st.download_button(
             label="📥 샘플 CSV 파일 다운로드",
@@ -2412,122 +2392,92 @@ def view_teacher_problems():
         st.info("검색 조건에 맞는 문제가 없습니다.")
     
 def parse_problems(text):
-    """AI가 생성한 문제 텍스트를 파싱하여 구조화된 문제 목록으로 변환합니다."""
+    """문제 텍스트를 파싱하여 문제 목록으로 변환하는 함수"""
     try:
-        # 결과를 저장할 리스트
-        problems = []
-        
-        # 문제 분리 패턴 (숫자로 시작하거나 '문제 1' 형태로 시작하는 줄)
-        problem_pattern = r'(?:^|\n)(?:\d+[\.\):]|문제\s*\d+[\.\):])'
-        
-        # 문제 텍스트 분리
+        # 정규식을 사용하여 문제 분리
+        problem_pattern = r'\[문제(?:\s+\d+)?\]'
         problem_texts = re.split(problem_pattern, text)
         
-        # 첫 번째 항목이 빈 문자열이거나 의미 없는 경우 제거
-        if problem_texts and (not problem_texts[0].strip() or len(problem_texts[0]) < 10):
+        # 첫 번째 빈 요소 제거
+        if problem_texts and not problem_texts[0].strip():
             problem_texts = problem_texts[1:]
         
-        # 문제 번호 추출 (몇 번 문제인지 확인용)
-        problem_numbers = re.findall(problem_pattern, text)
+        if not problem_texts:
+            return []
         
-        # 매칭된 문제 번호가 없으면 단일 문제로 처리
-        if not problem_numbers and text.strip():
-            problem_texts = [text]
-        
-        # 각 문제 텍스트 파싱
-        for i, problem_text in enumerate(problem_texts):
-            if not problem_text.strip():
+        problems = []
+        for p_text in problem_texts:
+            if not p_text.strip():
                 continue
             
-            problem = {}
-            
-            # 문제 본문 추출
-            lines = problem_text.strip().split('\n')
-            
-            # 질문과 내용 분리
-            question_text = lines[0].strip() if lines else ""
-            
-            # 질문이 너무 짧으면 여러 줄 합치기
-            if len(question_text) < 10 and len(lines) > 1:
-                question_text = " ".join([line.strip() for line in lines[:2]])
-            
-            problem["question"] = question_text
-            
-            # 문제 내용 전체
-            problem["content"] = problem_text
-            
-            # 선택지 추출 (객관식 문제인 경우)
-            options_pattern = r'(?:^|\n)(?:[A-D][\.\)])'
-            if re.search(options_pattern, problem_text):
-                problem["question_type"] = "객관식"
+            try:
+                # 문제 구성요소 파싱
+                problem = {}
                 
-                # 선택지 텍스트 추출
-                options_text = re.findall(r'(?:[A-D][\.\)].*(?:\n|$))+', problem_text)
-                if options_text:
-                    problem["options"] = "\n".join(options_text)
-            else:
-                # 선택지가 없으면 주관식 또는 서술형으로 판단
-                # 일단 주관식으로 기본 설정하고, 나중에 문제 내용에 따라 서술형으로 변경 가능
-                problem["question_type"] = "주관식"
-                problem["options"] = ""
-            
-            # 정답 추출 (Answer, 정답, 답 등으로 시작하는 줄)
-            answer_pattern = r'(?:^|\n)(?:Answer|정답|답)[\s\:]+(.+?)(?:\n|$)'
-            answer_match = re.search(answer_pattern, problem_text, re.IGNORECASE)
-            
-            if answer_match:
-                problem["answer"] = answer_match.group(1).strip()
-            else:
-                # 정답 패턴이 없으면 텍스트에서 가능한 정답 추출 시도
-                for line in lines:
-                    if '정답' in line or 'answer' in line.lower() or '답:' in line or '답은' in line:
-                        # 콜론이나 '은/는' 이후의 텍스트를 정답으로 추출
-                        if ':' in line:
-                            problem["answer"] = line.split(':', 1)[1].strip()
-                        elif '는' in line:
-                            problem["answer"] = line.split('는', 1)[1].strip()
-                        elif '은' in line:
-                            problem["answer"] = line.split('은', 1)[1].strip()
-                        else:
-                            problem["answer"] = line.replace('정답', '').replace('Answer', '').replace('답', '').strip()
-                        break
+                # 유형 파싱
+                type_match = re.search(r'유형:\s*(.+)', p_text)
+                if type_match:
+                    problem["type"] = type_match.group(1).strip()
                 
-                # 여전히 정답이 없으면 빈 문자열 설정
-                if "answer" not in problem:
-                    problem["answer"] = ""
-            
-            # 해설 추출 (Explanation, 해설 등으로 시작하는 줄)
-            explanation_pattern = r'(?:^|\n)(?:Explanation|해설|설명)[\s\:]+(.+(?:\n.+)*)'
-            explanation_match = re.search(explanation_pattern, problem_text, re.IGNORECASE)
-            
-            if explanation_match:
-                problem["explanation"] = explanation_match.group(1).strip()
-            else:
-                # 다른 패턴 시도
-                for line_idx, line in enumerate(lines):
-                    if '해설' in line or 'explanation' in line.lower() or '설명' in line:
-                        if line_idx < len(lines) - 1:
-                            problem["explanation"] = "\n".join(lines[line_idx+1:])
-                            break
+                # 문제 파싱
+                question_match = re.search(r'문제:\s*(.+?)(?=\n맥락|\n보기|\n정답|\n해설|$)', p_text, re.DOTALL)
+                if question_match:
+                    problem["question"] = question_match.group(1).strip()
                 
-                # 해설이 없으면 빈 문자열 설정
-                if "explanation" not in problem:
-                    problem["explanation"] = ""
-            
-            # 서술형 판단 (주관식이면서 정답이 긴 경우)
-            if problem["question_type"] == "주관식" and len(problem.get("answer", "")) > 30:
-                problem["question_type"] = "서술형"
-            
-            problems.append(problem)
+                # 맥락 파싱
+                context_match = re.search(r'맥락:\s*(.+?)(?=\n보기|\n정답|\n해설|$)', p_text, re.DOTALL)
+                if context_match:
+                    problem["context"] = context_match.group(1).strip()
+                
+                # 보기 파싱
+                options_match = re.search(r'보기:\s*(.+?)(?=\n정답|\n해설|$)', p_text, re.DOTALL)
+                if options_match:
+                    problem["options"] = options_match.group(1).strip()
+                
+                # 정답 파싱
+                answer_match = re.search(r'정답:\s*(.+?)(?=\n해설|$)', p_text, re.DOTALL)
+                if answer_match:
+                    problem["answer"] = answer_match.group(1).strip()
+                
+                # 해설 파싱
+                explanation_match = re.search(r'해설:\s*(.+)', p_text, re.DOTALL)
+                if explanation_match:
+                    problem["explanation"] = explanation_match.group(1).strip()
+                
+                # 최소한 문제와 정답이 있으면 추가
+                if "question" in problem and "answer" in problem:
+                    problems.append(problem)
+            except Exception as e:
+                st.error(f"문제 파싱 중 오류 발생: {str(e)}")
+                continue
         
         return problems
-    
     except Exception as e:
-        st.error(f"문제 파싱 중 오류가 발생했습니다: {str(e)}")
+        st.error(f"문제 목록 파싱 중 오류 발생: {str(e)}")
         return []
+
+# CSV 샘플 파일 생성 함수를 전역으로 이동
+def create_sample_csv():
+    """CSV 샘플 파일 생성"""
+    sample_data = {
+        'school_type': ['중학교', '고등학교'],
+        'grade': ['1학년', '2학년'],
+        'topic': ['일상생활/자기소개', '환경/사회문제'],
+        'difficulty': ['하', '중'],
+        'question_type': ['객관식', '주관식'],
+        'question': ['What is your name?', 'Write about environmental issues.'],
+        'context': ['Basic personal introduction', 'Discussion about climate change'],
+        'options': ['A. My name is John. B. I am from Korea. C. I am 15 years old. D. I live in Seoul.', ''],
+        'answer': ['A', 'Sample answer about environmental issues.'],
+        'explanation': ['This is how to introduce your name in English.', 'This is about writing environmental issues.']
+    }
     
+    df = pd.DataFrame(sample_data)
+    csv = df.to_csv(index=False)
+    return csv
+
 def admin_api_settings():
-    """API 키 설정"""
+    """API 키 설정 페이지"""
     st.header("API 설정")
     
     # 현재 API 키 상태
