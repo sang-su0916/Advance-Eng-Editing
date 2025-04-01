@@ -19,6 +19,7 @@ from problems import SAMPLE_PROBLEMS
 from prompts import get_correction_prompt
 import uuid
 import re
+import requests
 
 # Load environment variables first
 load_dotenv()
@@ -42,6 +43,9 @@ if 'openai_api_key' not in st.session_state:
 if 'gemini_api_key' not in st.session_state:
     # 환경 변수 이름을 통일하되, 이전 버전 호환성 유지
     st.session_state.gemini_api_key = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+if 'perplexity_api_key' not in st.session_state:
+    # Perplexity API 키 추가
+    st.session_state.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
 
 # Page configuration
 st.set_page_config(
@@ -89,6 +93,9 @@ def initialize_session_states():
     if 'gemini_api_key' not in st.session_state:
         # 환경 변수 이름을 통일하되, 이전 버전 호환성 유지
         st.session_state.gemini_api_key = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+    if 'perplexity_api_key' not in st.session_state:
+        # Perplexity API 키 추가
+        st.session_state.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
 
 # Initialize session state
 initialize_session_states()
@@ -142,6 +149,7 @@ def login_user(username, password):
                 load_dotenv()
                 st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
                 st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+                st.session_state.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
                 
                 return True
             else:
@@ -167,6 +175,7 @@ def logout_user():
     load_dotenv()
     st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
     st.session_state.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    st.session_state.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
 
 def register_user(username, password, role, name, email, created_by=None):
     """새 사용자 등록"""
@@ -826,6 +835,41 @@ def display_results():
             
             st.rerun()
 
+def perplexity_chat_completion(prompt, model="llama-3-sonar-small-32k", temperature=0.7):
+    """Perplexity API를 사용하여 응답을 생성하는 함수"""
+    try:
+        api_key = st.session_state.perplexity_api_key
+        if not api_key:
+            return None, "Perplexity API 키가 설정되지 않았습니다."
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are an expert English teacher."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature
+        }
+        
+        response = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers=headers,
+            json=payload
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result["choices"][0]["message"]["content"], None
+        else:
+            return None, f"Perplexity API 오류: {response.status_code} - {response.text}"
+    
+    except Exception as e:
+        return None, f"Perplexity API 호출 중 오류 발생: {str(e)}"
 
 def generate_feedback(problem_data, user_answer):
     """AI를 사용하여 학생의 답변에 대한 첨삭을 생성하는 함수"""
@@ -862,6 +906,35 @@ def generate_feedback(problem_data, user_answer):
                 return response.choices[0].message.content
             except Exception as e:
                 return f"OpenAI API 오류: {str(e)}\n\n간단한 평가: {'정답과 유사합니다.' if user_answer.lower() in correct_answer.lower() or correct_answer.lower() in user_answer.lower() else '정답과 차이가 있습니다.'}"
+        
+        # Perplexity API 사용 시도
+        elif 'perplexity_api_key' in st.session_state and st.session_state.perplexity_api_key:
+            try:
+                prompt = f"""
+                다음 문제에 대한 학생의 답변을 평가해주세요:
+                
+                문제: {question}
+                정답: {correct_answer}
+                학생 답변: {user_answer}
+                
+                다음 형식으로 답변해주세요:
+                1. 정확도 평가: 학생의 답변이 얼마나 정확한지 백분율로 표시
+                2. 강점: 학생 답변의 강점
+                3. 개선점: 학생 답변에서 개선이 필요한 부분
+                4. 조언: 더 나은 답변을 위한 조언
+                """
+                
+                feedback_content, error = perplexity_chat_completion(prompt)
+                if feedback_content:
+                    return feedback_content
+                elif error:
+                    # 오류 발생 시 Gemini API로 시도
+                    st.error(f"Perplexity API 오류: {error}")
+                    st.info("Google Gemini API로 시도합니다...")
+                
+            except Exception as e:
+                st.error(f"Perplexity API 오류: {str(e)}")
+                st.info("Google Gemini API로 시도합니다...")
         
         # Google Gemini 모델 사용
         elif 'gemini_api_key' in st.session_state and st.session_state.gemini_api_key:
@@ -1100,30 +1173,40 @@ def student_profile():
 
 # Teacher Dashboard
 def teacher_dashboard():
-    st.title(f"교사 대시보드 - {st.session_state.users[st.session_state.username]['name']}님")
+    """교사 대시보드 페이지"""
+    st.title("교사 대시보드 - 민현님")
     
-    # 사이드바 - 교사 메뉴
-    st.sidebar.title("교사 메뉴")
-    
+    # 사이드바 메뉴
     menu = st.sidebar.radio(
         "메뉴 선택:",
-        ["문제 관리", "학생 관리", "채점 및 첨삭", "프로필"]
+        ["문제 관리", "학생 관리", "채점", "프로필", "API 설정"]
     )
     
+    # 선택한 메뉴에 따라 다른 기능 표시
     if menu == "문제 관리":
         teacher_problem_management()
     elif menu == "학생 관리":
         teacher_student_management()
-    elif menu == "채점 및 첨삭":
+    elif menu == "채점":
         teacher_grading()
     elif menu == "프로필":
         teacher_profile()
+    elif menu == "API 설정":
+        admin_api_settings()
+
+    # API 키 경고
+    if not (st.session_state.openai_api_key or st.session_state.gemini_api_key or st.session_state.perplexity_api_key):
+        st.warning("AI 기능을 사용하려면 OpenAI API 키, Google Gemini API 키 또는 Perplexity API 키가 필요합니다. 'API 설정' 메뉴에서 설정해주세요.")
     
-    # 로그아웃 버튼
-    logout_button = st.sidebar.button("로그아웃")
-    if logout_button:
-        logout_user()
-        st.rerun()
+    # Google Gemini API 연결 오류 표시
+    if st.session_state.gemini_api_key and "teacher_problem_management" in st.session_state and st.session_state.teacher_problem_management.get("gemini_error"):
+        st.error(f"Google Gemini API 연결 오류: {st.session_state.teacher_problem_management.get('gemini_error')}")
+        st.info("다른 AI 모델(OpenAI 또는 Perplexity)을 사용하거나, API 설정에서 키를 확인해주세요.")
+    
+    # Perplexity API 연결 오류 표시
+    if st.session_state.perplexity_api_key and "teacher_problem_management" in st.session_state and st.session_state.teacher_problem_management.get("perplexity_error"):
+        st.error(f"Perplexity API 연결 오류: {st.session_state.teacher_problem_management.get('perplexity_error')}")
+        st.info("다른 AI 모델(OpenAI 또는 Google Gemini)을 사용하거나, API 설정에서 키를 확인해주세요.")
 
 def check_api_key():
     """API 키가 설정되어 있는지 확인하는 함수"""
@@ -1134,10 +1217,13 @@ def check_api_key():
         return bool(st.session_state.get('openai_api_key', '').strip())
     elif selected_model == "Google Gemini":
         return bool(st.session_state.get('gemini_api_key', '').strip())
+    elif selected_model == "Perplexity AI":
+        return bool(st.session_state.get('perplexity_api_key', '').strip())
     else:
-        # 둘 중 하나라도 설정되어 있으면 True
+        # 셋 중 하나라도 설정되어 있으면 True
         return bool(st.session_state.get('openai_api_key', '').strip() or 
-                   st.session_state.get('gemini_api_key', '').strip())
+                   st.session_state.get('gemini_api_key', '').strip() or
+                   st.session_state.get('perplexity_api_key', '').strip())
 
 def save_generated_problems(problems, school_type, grade, topic, difficulty):
     """생성된 문제를 저장하는 함수"""
@@ -1227,8 +1313,8 @@ def generate_ai_problems():
     # 생성 버튼
     if st.button("문제 생성하기"):
         # API 키 확인
-        if not st.session_state.openai_api_key and not st.session_state.gemini_api_key:
-            st.error("문제 생성을 위해서는 OpenAI 또는 Google Gemini API 키가 필요합니다.")
+        if not st.session_state.openai_api_key and not st.session_state.gemini_api_key and not st.session_state.perplexity_api_key:
+            st.error("문제 생성을 위해서는 OpenAI, Google Gemini 또는 Perplexity API 키가 필요합니다.")
             st.info("관리자에게 문의하거나, API 설정에서 키를 입력해주세요.")
             return
         
@@ -1279,6 +1365,46 @@ def generate_ai_problems():
                         
                     except Exception as e:
                         st.error(f"OpenAI API 오류: {str(e)}")
+                        st.info("Google Gemini API로 시도합니다...")
+                
+                # Perplexity API 사용 시도
+                if not problems and st.session_state.perplexity_api_key:
+                    try:
+                        # 프롬프트 작성
+                        prompt = f"""
+                        다음 조건에 맞는 영어 문제를 생성해주세요:
+                        - 교육과정: {school_type} {grade}
+                        - 주제: {topic}
+                        - 난이도: {difficulty}
+                        
+                        문제 형식:
+                        1. 객관식 문제 2개 (A, B, C, D 선택지)
+                        2. 주관식 문제 1개 (짧은 답변)
+                        3. 서술형 문제 1개 (긴 답변)
+                        
+                        각 문제에는 다음을 포함해 주세요:
+                        - 문제 번호와 질문
+                        - 상황 설명 (필요시)
+                        - 객관식인 경우 선택지
+                        - 정답
+                        - 해설 (학습 포인트)
+                        
+                        문제 작성 시 참고사항:
+                        - 학생들의 수준에 맞게 난이도 조절
+                        - 문제마다 정답과 해설 필수
+                        - 문화적 요소를 다양하게 포함
+                        - 실생활에 활용 가능한 표현 위주
+                        """
+                        
+                        problems_content, error = perplexity_chat_completion(prompt)
+                        if problems_content:
+                            problems = problems_content
+                        elif error:
+                            st.error(f"Perplexity API 오류: {error}")
+                            st.info("Google Gemini API로 시도합니다...")
+                        
+                    except Exception as e:
+                        st.error(f"Perplexity API 오류: {str(e)}")
                         st.info("Google Gemini API로 시도합니다...")
                 
                 # Google Gemini API 사용 시도
@@ -2323,4 +2449,240 @@ def parse_problems(text):
     except Exception as e:
         st.error(f"문제 파싱 중 오류가 발생했습니다: {str(e)}")
         return []
+    
+def admin_api_settings():
+    """API 키 설정"""
+    st.header("API 설정")
+    
+    # 현재 API 키 상태
+    openai_key_status = "설정됨 ✅" if st.session_state.openai_api_key else "설정되지 않음 ❌"
+    gemini_key_status = "설정됨 ✅" if st.session_state.gemini_api_key else "설정되지 않음 ❌"
+    perplexity_key_status = "설정됨 ✅" if st.session_state.perplexity_api_key else "설정되지 않음 ❌"
+    
+    st.info("API 키는 .env 파일에 저장되며, 애플리케이션 재시작 시 해당 파일에서 불러옵니다.")
+    st.warning("주의: API 키는 암호화되지 않은 일반 텍스트로 저장됩니다.")
+    
+    # 탭 생성
+    tab1, tab2, tab3 = st.tabs(["OpenAI API", "Google Gemini API", "Perplexity API"])
+    
+    with tab1:
+        st.subheader(f"OpenAI API 키 ({openai_key_status})")
+        openai_api_key = st.text_input(
+            "OpenAI API 키 입력:",
+            type="password",
+            value=st.session_state.openai_api_key,
+            help="https://platform.openai.com/account/api-keys에서 API 키를 발급받을 수 있습니다."
+        )
+        
+        if st.button("OpenAI API 키 저장", key="save_openai"):
+            if openai_api_key:
+                # API 키 세션 상태 업데이트
+                st.session_state.openai_api_key = openai_api_key.strip()
+                
+                # .env 파일에 API 키 저장
+                try:
+                    # 현재 .env 파일 내용 읽기
+                    env_content = ""
+                    if os.path.exists(".env"):
+                        with open(".env", "r") as f:
+                            env_content = f.read()
+                    
+                    # OPENAI_API_KEY가 이미 있는지 확인
+                    if "OPENAI_API_KEY" in env_content:
+                        # 기존 값 업데이트
+                        import re
+                        env_content = re.sub(
+                            r'OPENAI_API_KEY=.*', 
+                            f'OPENAI_API_KEY="{openai_api_key.strip()}"', 
+                            env_content
+                        )
+                    else:
+                        # 키 추가
+                        env_content += f'\nOPENAI_API_KEY="{openai_api_key.strip()}"\n'
+                    
+                    # 변경된 내용 저장
+                    with open(".env", "w") as f:
+                        f.write(env_content)
+                    
+                    st.success("OpenAI API 키가 성공적으로 저장되었습니다!")
+                except Exception as e:
+                    st.error(f"API 키 저장 중 오류가 발생했습니다: {str(e)}")
+            else:
+                st.warning("API 키를 입력해주세요.")
+        
+        # API 키 테스트
+        if st.button("OpenAI API 키 테스트", key="test_openai"):
+            if not st.session_state.openai_api_key:
+                st.warning("API 키가 설정되지 않았습니다.")
+            else:
+                with st.spinner("OpenAI API 키를 테스트 중입니다..."):
+                    try:
+                        client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+                        response = client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": "Hello, are you working?"}],
+                            max_tokens=10
+                        )
+                        st.success("OpenAI API 키가 정상적으로 작동합니다!")
+                    except Exception as e:
+                        st.error(f"OpenAI API 키 테스트 중 오류가 발생했습니다: {str(e)}")
+    
+    with tab2:
+        st.subheader(f"Google Gemini API 키 ({gemini_key_status})")
+        gemini_api_key = st.text_input(
+            "Google Gemini API 키 입력:",
+            type="password",
+            value=st.session_state.gemini_api_key,
+            help="https://makersuite.google.com/app/apikey에서 API 키를 발급받을 수 있습니다."
+        )
+        
+        if st.button("Google Gemini API 키 저장", key="save_gemini"):
+            if gemini_api_key:
+                # API 키 세션 상태 업데이트
+                st.session_state.gemini_api_key = gemini_api_key.strip()
+                
+                # .env 파일에 API 키 저장
+                try:
+                    # 현재 .env 파일 내용 읽기
+                    env_content = ""
+                    if os.path.exists(".env"):
+                        with open(".env", "r") as f:
+                            env_content = f.read()
+                    
+                    # GOOGLE_API_KEY가 이미 있는지 확인
+                    if "GOOGLE_API_KEY" in env_content:
+                        # 기존 값 업데이트
+                        import re
+                        env_content = re.sub(
+                            r'GOOGLE_API_KEY=.*', 
+                            f'GOOGLE_API_KEY="{gemini_api_key.strip()}"', 
+                            env_content
+                        )
+                    else:
+                        # 키 추가
+                        env_content += f'\nGOOGLE_API_KEY="{gemini_api_key.strip()}"\n'
+                    
+                    # GEMINI_API_KEY 제거 (통합)
+                    if "GEMINI_API_KEY" in env_content:
+                        env_content = re.sub(r'GEMINI_API_KEY=.*\n', '', env_content)
+                    
+                    # 변경된 내용 저장
+                    with open(".env", "w") as f:
+                        f.write(env_content)
+                    
+                    st.success("Google Gemini API 키가 성공적으로 저장되었습니다!")
+                except Exception as e:
+                    st.error(f"API 키 저장 중 오류가 발생했습니다: {str(e)}")
+            else:
+                st.warning("API 키를 입력해주세요.")
+        
+        # API 키 테스트
+        if st.button("Google Gemini API 키 테스트", key="test_gemini"):
+            if not st.session_state.gemini_api_key:
+                st.warning("API 키가 설정되지 않았습니다.")
+            else:
+                with st.spinner("Google Gemini API 키를 테스트 중입니다..."):
+                    try:
+                        genai.configure(api_key=st.session_state.gemini_api_key)
+                        
+                        # 사용 가능한 모델 목록 확인
+                        available_models = [m.name for m in genai.list_models()]
+                        gemini_models = [m for m in available_models if "gemini" in m.lower()]
+                        
+                        if gemini_models:
+                            st.success(f"Google Gemini API 키가 정상적으로 작동합니다! 사용 가능한 모델: {', '.join(gemini_models[:3])}...")
+                        else:
+                            st.warning("API 키는 유효하지만 Gemini 모델을 사용할 수 없습니다. 계정 권한을 확인하세요.")
+                    except Exception as e:
+                        st.error(f"Google Gemini API 키 테스트 중 오류가 발생했습니다: {str(e)}")
+    
+    with tab3:
+        st.subheader(f"Perplexity API 키 ({perplexity_key_status})")
+        perplexity_api_key = st.text_input(
+            "Perplexity API 키 입력:",
+            type="password",
+            value=st.session_state.perplexity_api_key,
+            help="https://www.perplexity.ai/settings/api에서 API 키를 발급받을 수 있습니다."
+        )
+        
+        if st.button("Perplexity API 키 저장", key="save_perplexity"):
+            if perplexity_api_key:
+                # API 키 세션 상태 업데이트
+                st.session_state.perplexity_api_key = perplexity_api_key.strip()
+                
+                # .env 파일에 API 키 저장
+                try:
+                    # 현재 .env 파일 내용 읽기
+                    env_content = ""
+                    if os.path.exists(".env"):
+                        with open(".env", "r") as f:
+                            env_content = f.read()
+                    
+                    # PERPLEXITY_API_KEY가 이미 있는지 확인
+                    if "PERPLEXITY_API_KEY" in env_content:
+                        # 기존 값 업데이트
+                        import re
+                        env_content = re.sub(
+                            r'PERPLEXITY_API_KEY=.*', 
+                            f'PERPLEXITY_API_KEY="{perplexity_api_key.strip()}"', 
+                            env_content
+                        )
+                    else:
+                        # 키 추가
+                        env_content += f'\nPERPLEXITY_API_KEY="{perplexity_api_key.strip()}"\n'
+                    
+                    # 변경된 내용 저장
+                    with open(".env", "w") as f:
+                        f.write(env_content)
+                    
+                    st.success("Perplexity API 키가 성공적으로 저장되었습니다!")
+                except Exception as e:
+                    st.error(f"API 키 저장 중 오류가 발생했습니다: {str(e)}")
+            else:
+                st.warning("API 키를 입력해주세요.")
+        
+        # API 키 테스트
+        if st.button("Perplexity API 키 테스트", key="test_perplexity"):
+            if not st.session_state.perplexity_api_key:
+                st.warning("API 키가 설정되지 않았습니다.")
+            else:
+                with st.spinner("Perplexity API 키를 테스트 중입니다..."):
+                    try:
+                        # 간단한 API 호출
+                        content, error = perplexity_chat_completion("Hello, are you working?")
+                        
+                        if content and not error:
+                            st.success("Perplexity API 키가 정상적으로 작동합니다!")
+                        else:
+                            st.error(f"Perplexity API 키 테스트 중 오류가 발생했습니다: {error}")
+                    except Exception as e:
+                        st.error(f"Perplexity API 키 테스트 중 오류가 발생했습니다: {str(e)}")
+    
+    st.divider()
+    
+    # AI 모델 선택
+    st.subheader("기본 AI 모델 설정")
+    
+    if 'selected_model' not in st.session_state:
+        st.session_state.selected_model = "OpenAI GPT"
+    
+    model_options = ["OpenAI GPT", "Google Gemini", "Perplexity AI"]
+    
+    selected_model = st.radio(
+        "기본 AI 모델:",
+        model_options,
+        index=model_options.index(st.session_state.selected_model)
+    )
+    
+    if selected_model != st.session_state.selected_model:
+        st.session_state.selected_model = selected_model
+        st.success(f"기본 AI 모델이 {selected_model}로 설정되었습니다.")
+        
+        # 선택한 모델에 API 키가 설정되어 있는지 확인
+        if selected_model == "OpenAI GPT" and not st.session_state.openai_api_key:
+            st.warning("OpenAI API 키가 설정되어 있지 않습니다.")
+        elif selected_model == "Google Gemini" and not st.session_state.gemini_api_key:
+            st.warning("Google Gemini API 키가 설정되어 있지 않습니다.")
+        elif selected_model == "Perplexity AI" and not st.session_state.perplexity_api_key:
+            st.warning("Perplexity API 키가 설정되어 있지 않습니다.")
     
