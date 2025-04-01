@@ -15,8 +15,8 @@
 
 1. 프로젝트 클론 또는 다운로드
    ```
-   git clone https://github.com/your-username/english-correction-app.git
-   cd english-correction-app
+   git clone https://github.com/sang-su0916/Auto-Eng01.git
+   cd Auto-Eng01
    ```
 2. 필요한 패키지 설치
    ```
@@ -25,11 +25,12 @@
    
    > **참고**: 이 앱은 OpenAI Python 패키지 v1.12.0 이상을 사용합니다. 이 버전에서는 `openai.OpenAI()` 대신 `openai.Client()`를 사용합니다.
 
-3. OpenAI API 키 설정
+3. API 키 설정
    - `.env.example` 파일을 복사하여 `.env` 파일 생성
-   - `.env` 파일에 OpenAI API 키 입력:
+   - `.env` 파일에 API 키 입력:
      ```
      OPENAI_API_KEY=your_api_key_here
+     GEMINI_API_KEY=your_api_key_here
      ```
 
 ## 실행 방법
@@ -50,20 +51,41 @@ streamlit run app.py
 6. AI 첨삭 결과 확인
 7. 필요시 "결과 저장하기" 버튼으로 결과 저장
 
-## Streamlit Cloud 배포
+## 배포 방법
+
+### Streamlit Cloud 배포
 
 이 앱은 Streamlit Cloud에 배포할 수 있습니다:
 
-1. 이 저장소를 GitHub에 포크 또는 복제
+1. GitHub에 저장소 푸시
 2. [Streamlit Cloud](https://streamlit.io/cloud)에 로그인
 3. "New app" 버튼 클릭
 4. 저장소, 브랜치, 메인 파일(app.py) 선택
-5. 고급 설정에서 OpenAI API 키를 환경 변수로 추가
+5. 고급 설정에서 필요한 API 키를 환경 변수로 추가:
+   - `OPENAI_API_KEY`
+   - `GEMINI_API_KEY` (선택사항)
 6. 배포 버튼 클릭
+
+### Heroku 배포
+
+Heroku에 배포하기:
+
+1. [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli) 설치
+2. 다음 명령어 실행:
+   ```
+   heroku login
+   heroku create your-app-name
+   git push heroku main
+   ```
+3. 환경 변수 설정:
+   ```
+   heroku config:set OPENAI_API_KEY=your_api_key_here
+   heroku config:set GEMINI_API_KEY=your_api_key_here
+   ```
 
 ## 참고 사항
 
-- 앱 사용을 위해서는 OpenAI API 키가 필요합니다.
+- 앱 사용을 위해서는 OpenAI API 키가 필요합니다. Gemini API는 선택사항입니다.
 - 최신 OpenAI Python 패키지(v1.12.0 이상)를 사용합니다. 이전 버전의 경우 호환성 문제가 발생할 수 있습니다.
 - 첨삭 결과는 텍스트 파일로 저장할 수 있습니다. 
-- 로컬에서 실행할 경우 파일 시스템에 접근할 수 있지만, Streamlit Cloud에 배포할 경우 로컬 파일 시스템에 저장하는 기능은 제한될 수 있습니다. 
+- 로컬에서 실행할 경우 파일 시스템에 접근할 수 있지만, 클라우드 서비스에 배포할 경우 로컬 파일 시스템에 저장하는 기능은 제한될 수 있습니다. 
